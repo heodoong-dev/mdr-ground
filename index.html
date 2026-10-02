@@ -1725,124 +1725,118 @@
                                                 const finalSingleFee = hasDiscount ? Math.max(0, rawSingleFee - RESERVED_DISCOUNT_AMOUNT) : rawSingleFee;
 
                                                 return (
-                                                    <div key={member.id} className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between hover:bg-gray-50/40 transition-colors gap-2.5">
-                                                        <div className="flex items-center gap-2.5">
-                                                            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[8px] font-black shadow-sm ${member.gender === '남' ? 'bg-blue-50 text-blue-500' : 'bg-orange-100 text-orange-600'}`}>{member.gender}</span>
-                                                            <div className="flex items-center gap-2 flex-wrap">
+                                                    <div key={member.id} className="p-2 sm:p-3 flex items-center justify-between hover:bg-gray-50/40 transition-colors gap-1.5">
+                                                        {/* 좌측: 성별, 이름, 주요 배지 (한 줄 유지) */}
+                                                        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
+                                                            <span className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full flex items-center justify-center text-[7px] sm:text-[8px] font-black shadow-xs shrink-0 ${member.gender === '남' ? 'bg-blue-50 text-blue-500' : 'bg-orange-100 text-orange-600'}`}>{member.gender}</span>
+                                                            <div className="flex items-center gap-1 sm:gap-1.5 truncate">
                                                                 {isAdmin ? (
                                                                     <button 
                                                                         onClick={() => setSelectedFeeMember(member.name)}
-                                                                        className="flex items-center gap-1.5 hover:text-green-600 transition-colors group cursor-pointer text-left"
+                                                                        className="flex items-center gap-1 hover:text-green-600 transition-colors group cursor-pointer text-left shrink-0"
                                                                         title="최근 6개월 회비 납부 이력 보기"
                                                                     >
-                                                                        <span className="font-bold text-xs text-gray-800 group-hover:text-green-600 underline-offset-2 group-hover:underline">{member.name}</span>
-                                                                        <span className="text-[9px] font-bold text-gray-400 bg-gray-100 group-hover:bg-green-50 group-hover:text-green-600 px-1.5 py-0.5 rounded-md transition-colors flex items-center gap-0.5">
-                                                                            기록 📊
+                                                                        <span className="font-bold text-xs text-gray-800 group-hover:text-green-600 underline-offset-2 group-hover:underline truncate max-w-[55px] sm:max-w-none">{member.name}</span>
+                                                                        <span className="text-[8px] font-bold text-gray-400 bg-gray-100 group-hover:bg-green-50 group-hover:text-green-600 px-1 py-0.2 rounded transition-colors shrink-0">
+                                                                            📊
                                                                         </span>
                                                                     </button>
                                                                 ) : (
-                                                                    <span className="font-bold text-xs text-gray-800">{member.name}</span>
+                                                                    <span className="font-bold text-xs text-gray-800 truncate max-w-[65px] sm:max-w-none">{member.name}</span>
                                                                 )}
                                                                 
-                                                                {/* 구장예약 한 사람에게만 명확하게 배지 표시 */}
+                                                                {/* 구장예약 한 사람 배지 */}
                                                                 {hasDiscount && (
-                                                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full border bg-purple-50 text-purple-700 border-purple-200">
-                                                                        구장예약
+                                                                    <span className="text-[8px] font-bold px-1.5 py-0.2 rounded-full border bg-purple-50 text-purple-700 border-purple-200 shrink-0">
+                                                                        예약
                                                                     </span>
                                                                 )}
 
-                                                                {/* 💡 일회비 대상자일 때: 출석 횟수 및 입금 여부 뱃지 노출 */}
+                                                                {/* 💡 일회비 대상자 배지 */}
                                                                 {status === 'single' && (
-                                                                    <div className="flex items-center gap-1.5 animate-in fade-in duration-200">
-                                                                        <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">
-                                                                            {monthAttends}회 출석 · {finalSingleFee.toLocaleString()}원
-                                                                        </span>
-                                                                        {isSinglePaid ? (
-                                                                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 flex items-center gap-0.5">
-                                                                                <span>✅</span> 입금완료
-                                                                            </span>
-                                                                        ) : (
-                                                                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-rose-100 text-rose-600 flex items-center gap-0.5">
-                                                                                <span>⏳</span> 미입금
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
+                                                                    <span className={`text-[8px] font-black px-1.5 py-0.2 rounded shrink-0 border ${
+                                                                        isSinglePaid 
+                                                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                                                                            : 'bg-amber-50 text-amber-800 border-amber-200'
+                                                                    }`}>
+                                                                        {monthAttends}회{isSinglePaid ? '·완' : '·미'}
+                                                                    </span>
                                                                 )}
                                                             </div>
                                                         </div>
                                                         
-                                                        {/* 4단계 상태 토글 버튼 그룹 및 입금확인/구장예약 토글 */}
-                                                        <div className="flex items-center gap-1.5 flex-wrap">
-                                                            {/* 💡 일회비일 때 관리자에게 제공되는 입금 확인 토글 버튼 */}
+                                                        {/* 우측: 4단계 상태 토글 버튼 그룹 및 관리자 보조 버튼 (한 줄 유지) */}
+                                                        <div className="flex items-center gap-1 shrink-0">
+                                                            {/* 💡 일회비 입금 확인 토글 버튼 (관리자 전용) */}
                                                             {isAdmin && status === 'single' && (
                                                                 <button
                                                                     onClick={() => toggleSinglePaidStatus(member.name)}
-                                                                    className={`px-2 py-1 rounded-lg text-[9px] font-black transition-all flex items-center gap-1 border shadow-xs ${
+                                                                    className={`px-1.5 py-0.5 sm:px-2 sm:py-1 rounded-lg text-[8px] sm:text-[9px] font-black transition-all border shadow-xs ${
                                                                         isSinglePaid 
-                                                                            ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700 shadow-sm' 
-                                                                            : 'bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100 active:scale-95'
+                                                                            ? 'bg-emerald-600 text-white border-emerald-600' 
+                                                                            : 'bg-amber-50 text-amber-700 border-amber-300'
                                                                     }`}
                                                                     title="일회비 계좌 입금 확인 토글"
                                                                 >
-                                                                    <span>{isSinglePaid ? '✅ 입금확인됨' : '💸 입금확인'}</span>
+                                                                    <span>{isSinglePaid ? '✅' : '💸'}</span>
                                                                 </button>
                                                             )}
 
-                                                            {/* 관리자 모드일 때 모든 멤버에게 구장예약 토글 버튼 노출 */}
+                                                            {/* 구장예약 토글 버튼 (관리자 전용) */}
                                                             {isAdmin && (
                                                                 <button
                                                                     onClick={() => toggleReservedDiscount(member.name)}
-                                                                    className={`px-2 py-1 rounded-lg text-[9px] font-black transition-all flex items-center gap-1 border shadow-xs ${
+                                                                    className={`px-1.5 py-0.5 sm:px-2 sm:py-1 rounded-lg text-[8px] sm:text-[9px] font-black transition-all border shadow-xs ${
                                                                         hasDiscount 
-                                                                            ? 'bg-purple-600 text-white border-purple-600 hover:bg-purple-700 shadow-sm' 
-                                                                            : 'bg-white text-gray-500 border-gray-200 hover:bg-purple-50 hover:text-purple-600'
+                                                                            ? 'bg-purple-600 text-white border-purple-600' 
+                                                                            : 'bg-white text-gray-400 border-gray-200'
                                                                     }`}
-                                                                    title="구장 예약으로 인한 회비 5,000원 차감 토글"
+                                                                    title="구장예약 5천원 할인 토글"
                                                                 >
-                                                                    <span>🏟️ 구장예약</span>
+                                                                    <span>🏟️</span>
                                                                 </button>
                                                             )}
 
-                                                            <div className="flex bg-gray-100/90 p-0.5 rounded-xl border border-gray-200/60 shadow-inner overflow-x-auto no-scrollbar">
+                                                            <div className="flex bg-gray-100/90 p-0.5 rounded-xl border border-gray-200/60 shadow-inner">
                                                                 <button 
                                                                     onClick={() => setMemberFeeStatus(member.name, 'paid')} 
-                                                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all flex items-center gap-1 ${
+                                                                    className={`px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-black transition-all flex items-center gap-0.5 ${
                                                                         status === 'paid' 
-                                                                            ? 'bg-emerald-500 text-white shadow-sm' 
+                                                                            ? 'bg-emerald-500 text-white shadow-xs' 
                                                                             : 'text-gray-400 hover:text-gray-600'
                                                                     }`}
                                                                 >
-                                                                    <span className="text-[8px]">●</span> 완료
+                                                                    <span className="text-[7px] hidden sm:inline">●</span><span>완료</span>
                                                                 </button>
                                                                 <button 
                                                                     onClick={() => setMemberFeeStatus(member.name, 'single')} 
-                                                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all flex items-center gap-1 ${
+                                                                    className={`px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-black transition-all flex items-center gap-0.5 ${
                                                                         status === 'single' 
-                                                                            ? 'bg-amber-500 text-white shadow-sm' 
+                                                                            ? 'bg-amber-500 text-white shadow-xs' 
                                                                             : 'text-gray-400 hover:text-gray-600'
                                                                     }`}
                                                                 >
-                                                                    <span className="text-[8px]">●</span> 일회비
+                                                                    <span className="text-[7px] hidden sm:inline">●</span><span>일회비</span>
                                                                 </button>
                                                                 <button 
                                                                     onClick={() => setMemberFeeStatus(member.name, 'break')} 
-                                                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all flex items-center gap-1 ${
+                                                                    className={`px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-black transition-all flex items-center gap-0.5 ${
                                                                         status === 'break' 
-                                                                            ? 'bg-slate-600 text-white shadow-sm' 
+                                                                            ? 'bg-slate-600 text-white shadow-xs' 
                                                                             : 'text-gray-400 hover:text-gray-600'
                                                                     }`}
                                                                 >
-                                                                    <span className="text-[8px]">●</span> 부상
+                                                                    <span className="text-[7px] hidden sm:inline">●</span><span>부상</span>
                                                                 </button>
                                                                 <button 
                                                                     onClick={() => setMemberFeeStatus(member.name, 'unpaid')} 
-                                                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all flex items-center gap-1 ${
+                                                                    className={`px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-black transition-all flex items-center gap-0.5 ${
                                                                         status === 'unpaid' 
-                                                                        ? 'bg-rose-500 text-white shadow-sm' 
+                                                                        ? 'bg-rose-500 text-white shadow-xs' 
                                                                         : 'text-gray-400 hover:text-gray-600'
                                                                     }`}
                                                                 >
-                                                                    <span className="text-[8px]">●</span> 미납
+                                                                    <span className="text-[7px] hidden sm:inline">●</span><span>미납</span>
                                                                 </button>
                                                             </div>
                                                         </div>
