@@ -3,11 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>[MDR]오늘의 팀</title>
+    <title>[MDR] 맛드레 그라운드</title>
     
     <meta property="og:type" content="website">
-    <meta property="og:title" content="[MDR]오늘의 팀">
-    <meta property="og:description" content="⚽ 이번 주 매치 참석 투표 및 황금 밸런스 팀 매칭!">
+    <meta property="og:title" content="[MDR] 맛드레 그라운드">
+    <meta property="og:description" content="⚽ 매치 참석 투표, 황금 밸런스 팀 매칭, 월별 출석왕 및 회비 납부 관리!">
     <meta property="og:image" content="https://images.unsplash.com/photo-1574629810360-7efbbe195018?q=80&w=1000&auto=format&fit=crop">
     
     <script src="https://cdn.tailwindcss.com"></script>
@@ -18,7 +18,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/lucide/0.360.0/lucide.min.css">
     
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@100;300;400;500;700;900&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap');
         body { 
             font-family: 'Noto Sans KR', sans-serif; 
             -webkit-tap-highlight-color: transparent; 
@@ -32,7 +32,7 @@
         .status-btn { transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
         .break-keep { word-break: keep-all; }
         
-        /* 🐖 돼지 캐릭터 애니메이션 */
+        /* 🐖 캐릭터 애니메이션 */
         @keyframes dribble-run {
             0% { transform: translateX(-150px) scaleX(1); }
             45% { transform: translateX(150px) scaleX(1); }
@@ -64,7 +64,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect, useRef, useMemo } = React;
         
         const Icon = ({ name, className }) => {
             const kebabName = name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase();
@@ -80,9 +80,12 @@
             const [members, setMembers] = useState([]); 
             const [matchedTeams, setMatchedTeams] = useState(null);
             const [teamCount, setTeamCount] = useState(2);
-            const [activeTab, setActiveTab] = useState('members'); 
+            
+            // 탭 상태: 모바일/PC 공용 탭 ('vote' | 'match' | 'rank' | 'fee' | 'manage')
+            const [activeTab, setActiveTab] = useState('vote'); 
             const [mainTab, setMainTab] = useState('match'); 
             const [isAdmin, setIsAdmin] = useState(false); 
+            const isAdminRef = useRef(false);
             const [isMatching, setIsMatching] = useState(false);
             const [isLoading, setIsLoading] = useState(true);
             const [newMember, setNewMember] = useState({ name: '', gender: '남', level: 3 });
@@ -93,15 +96,98 @@
             const [showDeleteModal, setShowDeleteModal] = useState(null); 
             const [showConfirmModal, setShowConfirmModal] = useState(null); 
             const [showResetModal, setShowResetModal] = useState(false); 
+            const [showRecordModal, setShowRecordModal] = useState(false);
+            const [showModeModal, setShowModeModal] = useState(false);
+            const [showFeeConfigModal, setShowFeeConfigModal] = useState(false);
+            const [selectedFeeMember, setSelectedFeeMember] = useState(null); // 최근 6개월 회비 상세 모달용 멤버명
+            const [feeInputMonthly, setFeeInputMonthly] = useState(20000);
+            const [feeInputSingle, setFeeInputSingle] = useState(10000);
+            const [modeInputNote, setModeInputNote] = useState('');
+            const [pendingAdminAction, setPendingAdminAction] = useState(null);
+
+            // 매치 성격 모드 (기본: 정기 매치)
+            const [currentMatchMode, setCurrentMatchMode] = useState('regular'); // 'regular' | 'irregular'
+            const [irregularTitle, setIrregularTitle] = useState('');
 
             const [passwordInput, setPasswordInput] = useState('');
             const [passwordError, setPasswordError] = useState(false);
             const [guestInput, setGuestInput] = useState({ name: '', gender: '남', level: 3 });
             const [showToast, setShowToast] = useState(null); 
 
-            const SHEET_API_URL = "https://script.google.com/macros/s/AKfycbyHqmuCwvepZmJ4Sm6__T8cWgKoG_aS_vKnAMj1fBFL54BQICAqjvxsqY_M-J6KfA/exec";
+            // --- 출석 히스토리 & 회비 상태 관리 ---
+            const [attendanceHistory, setAttendanceHistory] = useState(() => {
+                try {
+                    const saved = localStorage.getItem('mdr_attendance_history');
+                    return saved ? JSON.parse(saved) : [];
+                } catch (e) {
+                    return [];
+                }
+            });
+
+            // 💡 한국 표준시(KST) 기준 현재 YYYY-MM 추출 (새벽 0시 정각 칼같이 변경)
+            const getKSTYearMonth = () => {
+                const now = new Date();
+                const kstOffset = 9 * 60; // UTC+9
+                const kstDate = new Date(now.getTime() + (now.getTimezoneOffset() + kstOffset) * 60000);
+                const year = kstDate.getFullYear();
+                const month = String(kstDate.getMonth() + 1).padStart(2, '0');
+                return `${year}-${month}`;
+            };
+
+            const currentYearMonth = getKSTYearMonth();
+            const [selectedMonth, setSelectedMonth] = useState(currentYearMonth);
+            // 디폴트는 최근 3개월 ('3months')
+            // 'month' | '3months' | '6months' | 'custom'
+            const [rankPeriod, setRankPeriod] = useState('3months'); 
             
-            const anyModalOpen = !!(showAdminModal || showGuestModal || showDeleteModal || showConfirmModal || showResetModal);
+            // 기간조회용 시작월 / 종료월 상태 (기본 3개월 전 ~ 이번 달)
+            const getPastYearMonth = (monthsAgo) => {
+                const d = new Date();
+                d.setMonth(d.getMonth() - monthsAgo);
+                return d.toISOString().slice(0, 7);
+            };
+            const [customStartMonth, setCustomStartMonth] = useState(() => getPastYearMonth(2));
+            const [customEndMonth, setCustomEndMonth] = useState(currentYearMonth);
+
+            // 💡 매치 히스토리 접기/펼치기 & 비정기 제외 필터 상태
+            const [isHistoryExpanded, setIsHistoryExpanded] = useState(false);
+            const [excludeIrregular, setExcludeIrregular] = useState(false);
+            
+            // 회비 관리 (4가지 상태: paid=완료, single=일회비, break=부상, unpaid=미납)
+            // { status: 'paid'|'single'|'break'|'unpaid', reservedDiscount: boolean, singlePaid: boolean }
+            const [feeRecords, setFeeRecords] = useState(() => {
+                try {
+                    const saved = localStorage.getItem('mdr_fee_records');
+                    if (saved) {
+                        return JSON.parse(saved);
+                    }
+                } catch (e) {}
+                return {};
+            });
+            // 기본 정규 회비 20,000원, 일회비 10,000원, 구장예약 차감 5,000원
+            const [monthlyFeeAmount, setMonthlyFeeAmount] = useState(20000);
+            const [singleFeeAmount, setSingleFeeAmount] = useState(10000);
+            const RESERVED_DISCOUNT_AMOUNT = 5000;
+
+            // 출석 수동 기록 폼 (matchType: '정기' | '비정기')
+            const [recordForm, setRecordForm] = useState({
+                date: new Date().toISOString().slice(0, 10),
+                matchType: '정기',
+                eventNote: '',
+                selectedAttendees: []
+            });
+
+            // 사용자 배포 구글 웹앱 URL
+            const SHEET_API_URL = "https://script.google.com/macros/s/AKfycbw8iZyyPo3jj7mT3wbqWS_MOnie9bP__ec0L5Zse61IkkgGdmO6veX8ouHqdPNQM-3f/exec";
+
+            useEffect(() => {
+                localStorage.setItem('mdr_attendance_history', JSON.stringify(attendanceHistory));
+            }, [attendanceHistory]);
+
+            useEffect(() => {
+                localStorage.setItem('mdr_fee_records', JSON.stringify(feeRecords));
+            }, [feeRecords]);
+            const anyModalOpen = !!(showAdminModal || showGuestModal || showDeleteModal || showConfirmModal || showResetModal || showRecordModal || showModeModal || showFeeConfigModal || selectedFeeMember);
             const anyModalOpenRef = useRef(anyModalOpen);
             anyModalOpenRef.current = anyModalOpen;
             const pushedStateRef = useRef(false);
@@ -109,27 +195,35 @@
             useEffect(() => {
                 if (anyModalOpen) {
                     if (!pushedStateRef.current) {
-                        window.history.pushState({ modalOpen: true }, "");
-                        pushedStateRef.current = true;
+                        try {
+                            window.history.pushState({ modalOpen: true }, "");
+                            pushedStateRef.current = true;
+                        } catch (e) {}
                     }
                 } else {
                     if (pushedStateRef.current) {
                         pushedStateRef.current = false;
                         if (window.history.state && window.history.state.modalOpen) {
-                            window.history.back();
+                            try {
+                                window.history.back();
+                            } catch (e) {}
                         }
                     }
                 }
             }, [anyModalOpen]);
 
             useEffect(() => {
-                const handlePopState = (event) => {
+                const handlePopState = () => {
                     if (anyModalOpenRef.current) {
                         setShowAdminModal(false);
                         setShowGuestModal(false);
                         setShowDeleteModal(null);
                         setShowConfirmModal(null);
                         setShowResetModal(false);
+                        setShowRecordModal(false);
+                        setShowModeModal(false);
+                        setShowFeeConfigModal(false);
+                        setSelectedFeeMember(null);
                         pushedStateRef.current = false;
                     }
                 };
@@ -138,7 +232,11 @@
             }, []);
 
             const fetchMembers = () => {
-                if (!SHEET_API_URL) return;
+                if (!SHEET_API_URL) {
+                    setMembers([]);
+                    setIsLoading(false);
+                    return;
+                }
                 fetch(SHEET_API_URL)
                     .then(async (res) => {
                         const text = await res.text();
@@ -146,7 +244,36 @@
                         catch (e) { throw new Error("Invalid JSON"); }
                     })
                     .then(data => {
-                        const validMembers = data.filter(m => m && m.name && String(m.name).trim() !== '');
+                        let memberArray = [];
+                        // 1. 단일 멤버 배열 응답이거나 { members: [...], history: [...], fees: {...} } 응답 수용
+                        if (Array.isArray(data)) {
+                            memberArray = data;
+                        } else if (data && Array.isArray(data.members)) {
+                            memberArray = data.members;
+                            if (Array.isArray(data.history) && data.history.length > 0) {
+                                setAttendanceHistory(data.history);
+                            }
+                            // 💡 구글 시트 '회비' 탭 데이터 실시간 반영 (월별 딥 병합)
+                            if (data.fees && typeof data.fees === 'object') {
+                                setFeeRecords(prev => {
+                                    const merged = { ...prev };
+                                    Object.keys(data.fees).forEach(m => {
+                                        merged[m] = {
+                                            ...(merged[m] || {}),
+                                            ...data.fees[m]
+                                        };
+                                    });
+                                    return merged;
+                                });
+                            }
+                        }
+
+                        const validMembers = memberArray.filter(m => m && m.name && String(m.name).trim() !== '');
+                        if (validMembers.length === 0) {
+                            setMembers([]);
+                            setIsLoading(false);
+                            return;
+                        }
                         const formattedData = validMembers.map(m => {
                             let levelValue = 3;
                             if (typeof m.level === 'string') levelValue = parseInt(m.level.replace(/[^0-9]/g, '')) || 3;
@@ -164,8 +291,9 @@
                         setMembers(formattedData);
                         setIsLoading(false); 
                     })
-                    .catch(err => {
-                        notify("데이터 로딩 실패 (시트 권한을 확인하세요)");
+                    .catch(() => {
+                        setMembers([]);
+                        notify("네트워크 연결 또는 시트 데이터를 확인해주세요.");
                         setIsLoading(false);
                     });
             };
@@ -177,24 +305,40 @@
                 setTimeout(() => setShowToast(null), 2500);
             };
 
-            const handleTabChange = (tab) => {
-                if (tab === 'match' && !isAdmin) setShowAdminModal(true);
-                else setActiveTab(tab);
+            // 통합 탭 전환 핸들러 (모바일 및 PC 상단 탭 모두 지원)
+            const handleTabSwitch = (tabKey) => {
+                if (tabKey === 'vote') {
+                    setActiveTab('vote');
+                } else {
+                    setActiveTab(tabKey);
+                    setMainTab(tabKey);
+                }
             };
 
             const handleAdminLogin = () => {
-                if (passwordInput === "0703") {
+                if (passwordInput.trim() === "0703") {
+                    isAdminRef.current = true;
                     setIsAdmin(true);
                     setShowAdminModal(false);
                     setPasswordInput('');
-                    setActiveTab('match'); 
-                    notify("관리자 인증 성공!");
-                } else setPasswordError(true);
+                    setPasswordError(false);
+                    
+                    const actionToRun = pendingAdminAction;
+                    setPendingAdminAction(null);
+
+                    if (actionToRun) {
+                        actionToRun();
+                    }
+                    notify("관리자 인증 완료! 환영합니다.");
+                } else {
+                    setPasswordError(false);
+                    setPasswordError(true);
+                }
             };
 
             const handleLogout = () => {
+                isAdminRef.current = false;
                 setIsAdmin(false);
-                setActiveTab('members');
                 notify("관리자 모드가 해제되었습니다.");
             };
 
@@ -216,20 +360,500 @@
                         method: 'POST',
                         mode: 'no-cors',
                         body: JSON.stringify({ action: 'toggle', name: name, status: apiStatus })
-                    });
+                    }).catch(() => {});
                 }
                 setShowConfirmModal(null);
                 notify(`${name}님의 상태가 변경되었습니다.`);
             };
 
+            // ID 자동 생성 규격: mdr_YYYYMMDD_r(정기) 또는 mdr_YYYYMMDD_i(비정기)
+            const generateMatchId = (dateStr, matchType) => {
+                const cleanDate = dateStr.replace(/[^0-9]/g, ''); // 20261004
+                const typeCode = matchType === '정기' ? 'r' : 'i';
+                return `mdr_${cleanDate}_${typeCode}`;
+            };
+
+            // 타이틀 포맷 규격: 'YYYY-MM-DD 정기 매치' 또는 'YYYY-MM-DD 비정기 매치 (사유/이벤트명)'
+            const generateMatchTitle = (dateStr, matchType, eventNote = '') => {
+                const trimmedNote = (eventNote || '').trim();
+                if (matchType === '정기') {
+                    return `${dateStr} 정기 매치`;
+                }
+                return trimmedNote ? `${dateStr} 비정기 매치 (${trimmedNote})` : `${dateStr} 비정기 매치`;
+            };
+
+            // 구글 시트에 매치 히스토리 저장 호출 헬퍼
+            const sendMatchToSheet = (entry) => {
+                if (!SHEET_API_URL) return;
+                const payload = JSON.stringify({
+                    action: 'addMatch',
+                    id: entry.id,
+                    date: entry.date,
+                    matchType: entry.matchType,
+                    eventNote: entry.eventNote || '',
+                    title: entry.title,
+                    attendees: entry.attendees
+                });
+
+                // Google Apps Script는 text/plain 페이로드로 보낼 때 CORS 오류 없이 가장 완벽히 작동합니다.
+                fetch(SHEET_API_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    body: payload
+                }).then(() => {
+                    console.log("매치 데이터 시트 전송 완료:", entry.title);
+                }).catch((err) => {
+                    console.error("전송 에러:", err);
+                    notify("구글 시트 저장 통신 중 오류가 발생했습니다.");
+                });
+            };
+
+            // 구글 시트에서 매치 히스토리 삭제 호출 헬퍼
+            const deleteMatchFromSheet = (matchId) => {
+                if (!SHEET_API_URL) return;
+                fetch(SHEET_API_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    body: JSON.stringify({
+                        action: 'deleteMatch',
+                        id: matchId
+                    })
+                }).catch(() => {});
+            };
+
+            // 비정기 모드일 때 참석자 즉시 시트 저장
+            const handleSaveCurrentIrregular = () => {
+                const attendingRegularMembers = members
+                    .filter(m => !m.isGuest && m.isAttending === true)
+                    .map(m => m.name);
+
+                if (attendingRegularMembers.length === 0) {
+                    notify("현재 참석 투표한 정기멤버가 없습니다.");
+                    return;
+                }
+
+                const todayStr = new Date().toISOString().slice(0, 10);
+                const customId = generateMatchId(todayStr, '비정기');
+                const customTitle = generateMatchTitle(todayStr, '비정기', irregularTitle);
+
+                const newEntry = {
+                    id: customId,
+                    date: todayStr,
+                    matchType: '비정기',
+                    eventNote: irregularTitle.trim(),
+                    title: customTitle,
+                    attendees: attendingRegularMembers
+                };
+
+                setAttendanceHistory(prev => [newEntry, ...prev.filter(h => h.id !== customId)]);
+                sendMatchToSheet(newEntry);
+                notify(`[${customTitle}] 출석 기록이 '출석관리' 시트에 저장되었습니다! ⚡`);
+            };
+
+            // 월요일 리셋 시: 기존 참석자 명단이 있다면 자동 출석 저장 후 리셋
             const executeReset = () => {
+                const attendingRegularMembers = members
+                    .filter(m => !m.isGuest && m.isAttending === true)
+                    .map(m => m.name);
+
+                let autoSaved = false;
+                // 참석자가 1명 이상 있는 경우 자동 저장 보장
+                if (attendingRegularMembers.length > 0) {
+                    const todayStr = new Date().toISOString().slice(0, 10);
+                    const autoId = generateMatchId(todayStr, '정기');
+                    const autoTitle = generateMatchTitle(todayStr, '정기');
+                    
+                    // 기존에 동일 ID가 이미 있는지 중복 검사
+                    const alreadyExists = attendanceHistory.some(h => h.id === autoId);
+                    if (!alreadyExists) {
+                        const newRecord = {
+                            id: autoId,
+                            date: todayStr,
+                            matchType: '정기',
+                            eventNote: '',
+                            title: autoTitle,
+                            attendees: attendingRegularMembers
+                        };
+                        setAttendanceHistory(prev => [newRecord, ...prev]);
+                        sendMatchToSheet(newRecord);
+                        autoSaved = true;
+                    }
+                }
+
+                // 투표 상태 초기화
                 setMembers(members.map(m => ({ ...m, isAttending: null })));
                 setMatchedTeams(null);
                 if (SHEET_API_URL) {
-                    fetch(SHEET_API_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'bulkToggle', status: null }) });
+                    fetch(SHEET_API_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'bulkToggle', status: null }) }).catch(() => {});
                 }
                 setShowResetModal(false);
-                notify("모든 투표 기록이 초기화되었습니다.");
+
+                if (autoSaved) {
+                    notify(`출석 ${attendingRegularMembers.length}명이 시트에 자동 백업 저장된 후 투표가 리셋되었습니다! 👏`);
+                } else {
+                    notify("모든 투표 기록이 초기화되었습니다.");
+                }
+            };
+
+            // 기간 필터에 따른 히스토리 목록 추출
+            const filteredHistory = useMemo(() => {
+                const now = new Date();
+                return attendanceHistory.filter(item => {
+                    // 비정기 제외 옵션 활성화 시 정기 매치만 허용
+                    if (excludeIrregular && item.matchType === '비정기') {
+                        return false;
+                    }
+
+                    const itemMonth = item.date.slice(0, 7);
+                    if (rankPeriod === 'month') {
+                        return itemMonth === selectedMonth;
+                    }
+                    if (rankPeriod === '3months') {
+                        const itemDate = new Date(item.date);
+                        const diffMonths = (now.getFullYear() - itemDate.getFullYear()) * 12 + (now.getMonth() - itemDate.getMonth());
+                        return diffMonths >= 0 && diffMonths < 3;
+                    }
+                    if (rankPeriod === '6months') {
+                        const itemDate = new Date(item.date);
+                        const diffMonths = (now.getFullYear() - itemDate.getFullYear()) * 12 + (now.getMonth() - itemDate.getMonth());
+                        return diffMonths >= 0 && diffMonths < 6;
+                    }
+                    if (rankPeriod === 'custom') {
+                        const start = customStartMonth <= customEndMonth ? customStartMonth : customEndMonth;
+                        const end = customStartMonth <= customEndMonth ? customEndMonth : customStartMonth;
+                        return itemMonth >= start && itemMonth <= end;
+                    }
+                    return true;
+                }).sort((a, b) => new Date(b.date) - new Date(a.date));
+            }, [attendanceHistory, rankPeriod, selectedMonth, customStartMonth, customEndMonth, excludeIrregular]);
+
+            // 출석왕 집계 계산 (오직 정기멤버 DB에 등록된 멤버만 엄격하게 집계 및 구성)
+            const attendanceStats = useMemo(() => {
+                const regularMembers = members.filter(m => !m.isGuest);
+                const regularMap = new Map();
+                
+                regularMembers.forEach(m => {
+                    regularMap.set(m.name, {
+                        id: m.id,
+                        name: m.name,
+                        gender: m.gender,
+                        level: m.level,
+                        count: 0
+                    });
+                });
+
+                const totalMatches = filteredHistory.length;
+
+                filteredHistory.forEach(h => {
+                    const validAttendees = new Set(
+                        (h.attendees || []).filter(name => regularMap.has(name))
+                    );
+                    validAttendees.forEach(name => {
+                        const target = regularMap.get(name);
+                        if (target) target.count += 1;
+                    });
+                });
+
+                const list = Array.from(regularMap.values()).map(item => ({
+                    ...item,
+                    rate: totalMatches > 0 ? Math.round((item.count / totalMatches) * 100) : 0
+                }));
+
+                // 1차: 출석 횟수 내림차순, 2차: 이름 가나다순
+                list.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'ko-KR'));
+
+                // 동순위(표준 랭킹: 1위가 2명이면 다음 순위는 3위) 부여
+                let currentRank = 1;
+                for (let i = 0; i < list.length; i++) {
+                    if (i > 0 && list[i].count === list[i - 1].count) {
+                        list[i].rank = list[i - 1].rank;
+                    } else {
+                        list[i].rank = currentRank;
+                    }
+                    currentRank++;
+                }
+
+                // 💡 포디엄을 위한 출석 횟수 티어(Tier)별 그룹핑 (1위가 복수여도 다음 순위가 2위 단상에 정상 표시됨)
+                const uniqueCounts = [...new Set(list.filter(item => item.count > 0).map(item => item.count))].sort((a, b) => b - a);
+                const podiumTier1 = uniqueCounts[0] !== undefined ? list.filter(item => item.count === uniqueCounts[0]) : [];
+                const podiumTier2 = uniqueCounts[1] !== undefined ? list.filter(item => item.count === uniqueCounts[1]) : [];
+                const podiumTier3 = uniqueCounts[2] !== undefined ? list.filter(item => item.count === uniqueCounts[2]) : [];
+
+                const rankGroups = { 1: podiumTier1, 2: podiumTier2, 3: podiumTier3 };
+
+                return { list, totalMatches, rankGroups };
+            }, [filteredHistory, members]);
+
+            // 비정기 기록 모달 오픈 헬퍼
+            const openIrregularRecordModal = (attendeeNames) => {
+                setRecordForm({
+                    date: new Date().toISOString().slice(0, 10),
+                    matchType: '비정기',
+                    eventNote: '',
+                    selectedAttendees: attendeeNames
+                });
+                setShowRecordModal(true);
+            };
+
+            // 비정기 기록 버튼 클릭 시 (관리자 인증 검증 후 실행)
+            const handleIrregularRecordClick = () => {
+                const attendingNames = members
+                    .filter(m => !m.isGuest && m.isAttending === true)
+                    .map(m => m.name);
+
+                if (attendingNames.length === 0) {
+                    notify("현재 참석 투표한 정기멤버가 없습니다.");
+                    return;
+                }
+
+                if (!isAdmin) {
+                    setPendingAdminAction(() => () => openIrregularRecordModal(attendingNames));
+                    setShowAdminModal(true);
+                } else {
+                    openIrregularRecordModal(attendingNames);
+                }
+            };
+
+            // 출석 히스토리 삭제
+            const handleDeleteHistory = (histId) => {
+                setAttendanceHistory(prev => prev.filter(h => h.id !== histId));
+                deleteMatchFromSheet(histId);
+                notify("해당 매치 기록이 삭제되었습니다.");
+            };
+
+            const currentFeeStatus = feeRecords[selectedMonth] || {};
+            // 정기멤버 목록을 가나다순으로 통일하여 투표/출석왕/회비 간 완벽 동기화
+            const regularMemberList = useMemo(() => {
+                return members
+                    .filter(m => !m.isGuest)
+                    .sort((a, b) => a.name.localeCompare(b.name, 'ko-KR'));
+            }, [members]);
+            
+            // 💡 구글 시트 '회비' 탭으로 실시간 전송 헬퍼 함수
+            const sendFeeToSheet = (month, name, status, reservedDiscount, singlePaid) => {
+                if (!SHEET_API_URL) return;
+                fetch(SHEET_API_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    body: JSON.stringify({
+                        action: 'updateFee',
+                        month: month,
+                        name: name,
+                        status: status,
+                        reservedDiscount: reservedDiscount,
+                        singlePaid: singlePaid
+                    })
+                }).catch(() => {});
+            };
+
+            // 멤버별 회비 상태 변경 (관리자 전용)
+            const setMemberFeeStatus = (memberName, status) => {
+                if (!isAdmin && !isAdminRef.current) {
+                    setPendingAdminAction(() => () => setMemberFeeStatus(memberName, status));
+                    setShowAdminModal(true);
+                    return;
+                }
+
+                const currentObj = currentFeeStatus[memberName] || { status: 'unpaid', reservedDiscount: false, singlePaid: false };
+                const currentEntry = typeof currentObj === 'string' ? { status: currentObj, reservedDiscount: false, singlePaid: false } : currentObj;
+                const nextDiscount = currentEntry.reservedDiscount;
+                // 일회비로 변경 시 기본 미입금(false), 완료로 가면 무관
+                const nextSinglePaid = status === 'single' ? (currentEntry.singlePaid || false) : false;
+
+                setFeeRecords(prev => ({
+                    ...prev,
+                    [selectedMonth]: {
+                        ...(prev[selectedMonth] || {}),
+                        [memberName]: {
+                            status: status,
+                            reservedDiscount: nextDiscount,
+                            singlePaid: nextSinglePaid
+                        }
+                    }
+                }));
+
+                // 구글 시트 '회비' 시트로 즉시 전송
+                sendFeeToSheet(selectedMonth, memberName, status, nextDiscount, nextSinglePaid);
+            };
+
+            // 구장 예약 할인 토글 (관리자 전용)
+            const toggleReservedDiscount = (memberName) => {
+                if (!isAdmin && !isAdminRef.current) {
+                    setPendingAdminAction(() => () => toggleReservedDiscount(memberName));
+                    setShowAdminModal(true);
+                    return;
+                }
+
+                const currentObj = currentFeeStatus[memberName] || { status: 'unpaid', reservedDiscount: false, singlePaid: false };
+                const currentEntry = typeof currentObj === 'string' ? { status: currentObj, reservedDiscount: false, singlePaid: false } : currentObj;
+                const nextDiscount = !currentEntry.reservedDiscount;
+
+                setFeeRecords(prev => ({
+                    ...prev,
+                    [selectedMonth]: {
+                        ...(prev[selectedMonth] || {}),
+                        [memberName]: {
+                            ...currentEntry,
+                            reservedDiscount: nextDiscount
+                        }
+                    }
+                }));
+
+                // 구글 시트 '회비' 시트로 즉시 전송
+                sendFeeToSheet(selectedMonth, memberName, currentEntry.status, nextDiscount, currentEntry.singlePaid || false);
+            };
+
+            // 💡 일회비 멤버의 입금 완료 여부 토글 (관리자 전용)
+            const toggleSinglePaidStatus = (memberName) => {
+                if (!isAdmin && !isAdminRef.current) {
+                    setPendingAdminAction(() => () => toggleSinglePaidStatus(memberName));
+                    setShowAdminModal(true);
+                    return;
+                }
+
+                const currentObj = currentFeeStatus[memberName] || { status: 'single', reservedDiscount: false, singlePaid: false };
+                const currentEntry = typeof currentObj === 'string' ? { status: currentObj, reservedDiscount: false, singlePaid: false } : currentObj;
+                const nextSinglePaid = !currentEntry.singlePaid;
+
+                setFeeRecords(prev => ({
+                    ...prev,
+                    [selectedMonth]: {
+                        ...(prev[selectedMonth] || {}),
+                        [memberName]: {
+                            ...currentEntry,
+                            singlePaid: nextSinglePaid
+                        }
+                    }
+                }));
+
+                sendFeeToSheet(selectedMonth, memberName, currentEntry.status, currentEntry.reservedDiscount, nextSinglePaid);
+                notify(`${memberName}님의 일회비가 ${nextSinglePaid ? '입금 확인(완납)' : '미입금'}으로 변경되었습니다.`);
+            };
+
+            const feeSummary = useMemo(() => {
+                let paidCount = 0;
+                let reservedDiscountCount = 0;
+                let singleCount = 0;
+                let singlePaidCount = 0; // 실제 일회비 입금 완료한 인원
+                let singleTotalAttendances = 0;
+                let breakCount = 0;
+                let unpaidCount = 0;
+                let collectedAmount = 0;
+
+                // 💡 선택된 월(selectedMonth)의 출석 횟수 매핑: 오직 '정기' 매치만 집계 (비정기 번개/교류전 제외)
+                const monthHistory = (attendanceHistory || []).filter(h => 
+                    h.date && 
+                    h.date.startsWith(selectedMonth) &&
+                    (h.matchType === '정기' || !h.matchType || h.matchType === '')
+                );
+                const monthAttendanceCounts = {};
+                monthHistory.forEach(h => {
+                    const attendees = Array.isArray(h.attendees) ? h.attendees : [];
+                    attendees.forEach(name => {
+                        monthAttendanceCounts[name] = (monthAttendanceCounts[name] || 0) + 1;
+                    });
+                });
+
+                regularMemberList.forEach(m => {
+                    const val = currentFeeStatus[m.name];
+                    const entry = typeof val === 'string' 
+                        ? { status: val, reservedDiscount: false, singlePaid: false } 
+                        : (val || { status: 'unpaid', reservedDiscount: false, singlePaid: false });
+                    
+                    const st = entry.status;
+                    if (st === 'paid') {
+                        paidCount++;
+                        if (entry.reservedDiscount) {
+                            reservedDiscountCount++;
+                            collectedAmount += Math.max(0, monthlyFeeAmount - RESERVED_DISCOUNT_AMOUNT);
+                        } else {
+                            collectedAmount += monthlyFeeAmount;
+                        }
+                    } else if (st === 'single') {
+                        singleCount++;
+                        const attends = monthAttendanceCounts[m.name] || 0;
+                        singleTotalAttendances += attends;
+                        const singleTotal = attends * singleFeeAmount;
+                        const finalDue = entry.reservedDiscount ? Math.max(0, singleTotal - RESERVED_DISCOUNT_AMOUNT) : singleTotal;
+                        
+                        if (entry.reservedDiscount) {
+                            reservedDiscountCount++;
+                        }
+                        // 실제 입금확인이 된 일회비만 수납 총액 및 완납자 수에 반영!
+                        if (entry.singlePaid) {
+                            singlePaidCount++;
+                            collectedAmount += finalDue;
+                        }
+                    } else if (st === 'break') {
+                        breakCount++;
+                    } else {
+                        unpaidCount++;
+                    }
+                });
+
+                // 납부 대상 인원 = 완료 + 일회비 + 미납 (부상은 유예)
+                const totalTarget = paidCount + singleCount + unpaidCount;
+                // 실제 완납율 = (정규완납 + 일회비입금완료) / 전체 대상
+                const paidRate = totalTarget > 0 ? Math.round(((paidCount + singlePaidCount) / totalTarget) * 100) : 0;
+
+                return { 
+                    paidCount, 
+                    reservedDiscountCount, 
+                    singleCount, 
+                    singlePaidCount,
+                    singleTotalAttendances, 
+                    breakCount, 
+                    unpaidCount, 
+                    paidRate, 
+                    collectedAmount, 
+                    totalTarget, 
+                    monthAttendanceCounts 
+                };
+            }, [currentFeeStatus, regularMemberList, monthlyFeeAmount, singleFeeAmount, selectedMonth, attendanceHistory]);
+
+            const copyUnpaidReminder = () => {
+                const unpaidRegular = [];
+                const unpaidSingle = [];
+
+                regularMemberList.forEach(m => {
+                    const val = currentFeeStatus[m.name];
+                    const entry = typeof val === 'string' ? { status: val } : (val || { status: 'unpaid' });
+                    const st = entry.status;
+                    
+                    if (st === 'unpaid') {
+                        unpaidRegular.push(m.name);
+                    } else if (st === 'single' && !entry.singlePaid) {
+                        const attends = feeSummary.monthAttendanceCounts[m.name] || 0;
+                        const due = attends * singleFeeAmount - (entry.reservedDiscount ? RESERVED_DISCOUNT_AMOUNT : 0);
+                        unpaidSingle.push(`${m.name}(일회비 ${Math.max(0, due).toLocaleString()}원)`);
+                    }
+                });
+
+                const allUnpaid = [...unpaidRegular, ...unpaidSingle];
+
+                if (allUnpaid.length === 0) {
+                    notify("미납 대상 인원이 없습니다! 👏");
+                    return;
+                }
+
+                let listText = '';
+                if (unpaidRegular.length > 0) listText += `• 정규 회비 미납 (${unpaidRegular.length}명): ${unpaidRegular.join(', ')}\n`;
+                if (unpaidSingle.length > 0) listText += `• 일회비 미입금 (${unpaidSingle.length}명): ${unpaidSingle.join(', ')}\n`;
+
+                const msg = `📢 [맛드레 그라운드] ${selectedMonth.split('-')[1]}월 회비 납부 안내 ⚽\n\n` +
+                    `정규 회비: 인당 ${monthlyFeeAmount.toLocaleString()}원 (구장예약 차감 시 ${(monthlyFeeAmount - RESERVED_DISCOUNT_AMOUNT).toLocaleString()}원)\n` +
+                    `일회비: 정기전 회당 ${singleFeeAmount.toLocaleString()}원\n\n` +
+                    listText +
+                    `\n원활한 구장 대관 및 팀 운영을 위해 입금 확인 부탁드립니다. 감사합니다! 🔥`;
+
+                const textArea = document.body.appendChild(document.createElement("textarea"));
+                textArea.value = msg;
+                textArea.select();
+                try {
+                    document.execCommand('copy');
+                    notify("카톡 공지용 미납 안내문구가 복사되었습니다!");
+                } catch (e) {}
+                document.body.removeChild(textArea);
             };
 
             const handleShareText = () => {
@@ -240,7 +864,7 @@
                     text += team.players.map(p => `- ${p.name}(${p.gender === '남' ? '남' : '여'})`).join('\n');
                     text += `\n\n`;
                 });
-                text += `오늘도 즐거운 경기 하세요! 🔥`;
+                text += `오늘도 부상 없이 즐거운 경기 하세요! 🔥`;
                 const textArea = document.body.appendChild(document.createElement("textarea"));
                 textArea.value = text;
                 textArea.select();
@@ -270,32 +894,28 @@
 
                     const getCost = (teamsArray) => {
                         const avgs = teamsArray.map(t => getTeamAverage(t.players));
-                        return Math.max(...avgs) - Math.min(...avgs); // 팀 간 평균 레벨의 최대 차이를 비용으로 계산
+                        return Math.max(...avgs) - Math.min(...avgs);
                     };
 
                     let bestTeams = null;
                     let bestCost = Infinity;
 
-                    // 최적의 평균 밸런스를 찾기 위해 여러 번 시뮬레이션 (다중 시작 언덕 오르기 알고리즘)
                     for (let attempt = 0; attempt < 30; attempt++) {
                         let currentTeams = Array.from({ length: teamCount }, (_, i) => ({
                             id: i, name: `${String.fromCharCode(65 + i)}팀`, players: []
                         }));
 
-                        // 매 시도마다 배열을 무작위로 섞어 다양한 초기 상태 생성
                         const shuffledFemales = [...females].sort(() => Math.random() - 0.5);
                         const shuffledMales = [...males].sort(() => Math.random() - 0.5);
 
-                        // 1. 인원수를 고르게 분배 (라운드 로빈)
                         let teamIdx = 0;
                         shuffledFemales.forEach(p => { currentTeams[teamIdx].players.push(p); teamIdx = (teamIdx + 1) % teamCount; });
                         shuffledMales.forEach(p => { currentTeams[teamIdx].players.push(p); teamIdx = (teamIdx + 1) % teamCount; });
 
                         let currentCost = getCost(currentTeams);
 
-                        // 2. 무작위 스왑을 통한 평균 레벨 최적화 (성별 유지, 인원수 유지)
                         for (let i = 0; i < 2000; i++) {
-                            if (currentCost === 0) break; // 완벽한 밸런스를 찾으면 조기 종료
+                            if (currentCost === 0) break;
 
                             const t1Idx = Math.floor(Math.random() * teamCount);
                             let t2Idx = Math.floor(Math.random() * teamCount);
@@ -311,7 +931,6 @@
                             const p1Idx = Math.floor(Math.random() * t1.players.length);
                             const p1 = t1.players[p1Idx];
 
-                            // 같은 성별의 플레이어만 교환 대상으로 지정 (성별 밸런스 붕괴 방지)
                             const matchingGenderPlayers = t2.players
                                 .map((p, idx) => ({ p, idx }))
                                 .filter(item => item.p.gender === p1.gender);
@@ -322,39 +941,31 @@
                             const p2Idx = p2Item.idx;
                             const p2 = p2Item.p;
 
-                            // 스왑 (Swap)
                             t1.players[p1Idx] = p2;
                             t2.players[p2Idx] = p1;
 
                             const newCost = getCost(currentTeams);
 
                             if (newCost < currentCost) {
-                                currentCost = newCost; // 개선됨 (채택)
+                                currentCost = newCost;
                             } else if (newCost === currentCost && Math.random() < 0.3) {
-                                // 정체 구간 탈출을 위해 동일 비용 시 일부 허용
                             } else {
-                                // 롤백 (원상복구)
                                 t1.players[p1Idx] = p1;
                                 t2.players[p2Idx] = p2;
                             }
                         }
 
-                        // 최적의 조합 갱신
                         if (currentCost < bestCost) {
                             bestCost = currentCost;
                             bestTeams = currentTeams.map(t => ({ ...t, players: [...t.players] }));
                         }
-                        
                         if (bestCost === 0) break;
                     }
 
-                    // 최종 정리: 총합 및 카운트 계산 후 정렬
                     bestTeams.forEach(team => {
                         team.totalLevel = team.players.reduce((acc, p) => acc + p.level, 0);
                         team.fCount = team.players.filter(p => p.gender === '여' || p.gender === 'F').length;
                         team.mCount = team.players.filter(p => p.gender === '남' || p.gender === 'M').length;
-                        
-                        // 완벽한 무작위 배열 섞기를 위해 Fisher-Yates 셔플 알고리즘 적용
                         for (let i = team.players.length - 1; i > 0; i--) {
                             const j = Math.floor(Math.random() * (i + 1));
                             [team.players[i], team.players[j]] = [team.players[j], team.players[i]];
@@ -363,7 +974,7 @@
 
                     setMatchedTeams(bestTeams.sort((a, b) => a.id - b.id));
                     setIsMatching(false);
-                }, 800);
+                }, 600);
             };
 
             const sortedMembers = [...members].sort((a, b) => !a.isGuest ? a.name.localeCompare(b.name, 'ko-KR') : a.id - b.id);
@@ -377,7 +988,7 @@
                 if (window.lucide) {
                     window.lucide.createIcons();
                 }
-            }, [isLoading, activeTab, mainTab, members, matchedTeams]);
+            }, [isLoading, activeTab, mainTab, members, matchedTeams, attendanceStats, rankPeriod, selectedMonth, customStartMonth, customEndMonth, isHistoryExpanded, excludeIrregular]);
 
             if (isLoading) {
                 return (
@@ -401,7 +1012,7 @@
                                 <div className="animate-ball-kick text-5xl leading-none">⚽</div>
                             </div>
                         </div>
-                        <p className="text-sm text-gray-400 font-bold tracking-tight">명단을 불러오고 있습니다...</p>
+                        <p className="text-sm text-gray-400 font-bold tracking-tight">맛드레 그라운드 입장 중...</p>
                         <p className="mt-4 text-xs text-green-600/90 font-black italic uppercase tracking-[0.2em]">made by 뚱서</p>
                     </div>
                 );
@@ -410,19 +1021,89 @@
             return (
                 <div className="h-[100dvh] w-full flex flex-col md:flex-row relative bg-gray-50 overflow-hidden text-center">
                     {showToast && (
-                        <div className="fixed top-8 left-1/2 transform -translate-x-1/2 z-[200] bg-gray-900/90 backdrop-blur-md text-white px-6 py-2.5 rounded-full shadow-xl font-bold animate-in fade-in slide-in-from-top-2 duration-300 text-xs text-center whitespace-nowrap">
+                        <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-[300] bg-gray-900/95 backdrop-blur-md text-white px-5 py-2.5 rounded-full shadow-2xl font-bold animate-in fade-in slide-in-from-top-2 duration-300 text-xs text-center whitespace-nowrap border border-white/10">
                             {showToast}
                         </div>
                     )}
 
-                    {/* 사이드바: 참석체크 */}
-                    <div className={`w-full md:w-80 bg-white border-r border-gray-100 flex flex-col h-full ${activeTab !== 'members' ? 'hidden md:flex' : 'flex'}`}>
+                    {/* 사이드바: 오늘 참석체크 투표 영역 (모바일에서는 'vote' 탭일 때만 전체화면 노출, PC에서는 좌측 상시 고정) */}
+                    <div className={`w-full md:w-80 bg-white border-r border-gray-100 flex flex-col h-full ${activeTab !== 'vote' ? 'hidden md:flex' : 'flex'}`}>
                         <div className="p-3.5 border-b border-gray-50 bg-white sticky top-0 z-20 flex justify-between items-center shrink-0">
                             <h1 className="text-lg font-black text-green-600 flex items-center gap-2 tracking-tighter text-left">
-                                <span className="text-xl text-left">⚽</span> 오늘의 팀
+                                <span className="text-xl">⚽</span> 맛드레 그라운드
                             </h1>
-                            {isAdmin && <button onClick={handleLogout} className="text-[10px] bg-gray-100 text-gray-500 px-2 py-1 rounded-md font-bold hover:bg-gray-200 transition-colors">인증 해제</button>}
+                            <div className="flex items-center gap-1.5">
+                                {isAdmin ? (
+                                    <button 
+                                        onClick={handleLogout} 
+                                        className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200/70 px-2.5 py-1.5 rounded-lg font-black hover:bg-emerald-100 transition-all flex items-center justify-center gap-1 leading-none shadow-xs"
+                                    >
+                                        <Icon name="ShieldCheck" className="w-3 h-3 text-emerald-600 shrink-0" />
+                                        <span>인증 해제</span>
+                                    </button>
+                                ) : (
+                                    <button 
+                                        onClick={() => setShowAdminModal(true)} 
+                                        className="text-[10px] bg-green-50 text-green-600 border border-green-200/60 px-2.5 py-1.5 rounded-lg font-black hover:bg-green-100 transition-all flex items-center justify-center gap-1 leading-none shadow-xs"
+                                    >
+                                        <Icon name="Lock" className="w-3 h-3 text-green-600 shrink-0" />
+                                        <span>관리자</span>
+                                    </button>
+                                )}
+                            </div>
                         </div>
+
+                        {/* 참석 확정 인원 강조 헤더 바 */}
+                        <div className="bg-gradient-to-r from-emerald-50 via-green-50/60 to-emerald-50/30 px-3.5 py-2.5 border-b border-green-100/70 flex items-center justify-between">
+                            <div className="flex items-center gap-2 text-left">
+                                <span className="text-base">🏃</span>
+                                <div>
+                                    <div className="text-[13px] font-black text-emerald-950 flex items-center gap-1.5">
+                                        현재 참석 확정 <span className="text-base font-black text-emerald-600">{attendingCount}</span>명
+                                    </div>
+                                    <span className="text-[10px] font-bold text-emerald-700/70">
+                                        {currentMatchMode === 'regular' ? '이번 주 정기 매치 투표 중' : `⚡ 비정기 번개/교류전 (${irregularTitle || '이벤트'})`}
+                                    </span>
+                                </div>
+                            </div>
+
+                            {isAdmin && (
+                                <button 
+                                    onClick={() => {
+                                        if (currentMatchMode === 'regular') {
+                                            setModeInputNote('주중 번개 매치');
+                                            setShowModeModal(true);
+                                        } else {
+                                            setCurrentMatchMode('regular');
+                                            setIrregularTitle('');
+                                            notify("정기 매치 모드로 전환되었습니다. ⚽");
+                                        }
+                                    }}
+                                    className={`px-2.5 py-1.5 rounded-lg text-[10px] font-black transition-all border shadow-sm ${
+                                        currentMatchMode === 'irregular'
+                                            ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700'
+                                            : 'bg-purple-600 text-white border-purple-600 hover:bg-purple-700 active:scale-95'
+                                    }`}
+                                >
+                                    {currentMatchMode === 'irregular' ? '정기 전환 ⚽' : '비정기 전환 ⚡'}
+                                </button>
+                            )}
+                        </div>
+
+                        {/* 관리자가 인증된 상태에서 비정기 모드를 켰을 때만 나타나는 보조 바 */}
+                        {isAdmin && currentMatchMode === 'irregular' && (
+                            <div className="bg-purple-50 px-3.5 py-2 border-b border-purple-200/70 flex items-center justify-between text-left animate-in fade-in duration-200">
+                                <div className="text-[10px] font-bold text-purple-900 truncate pr-2">
+                                    사유: <span className="font-black text-purple-700">{irregularTitle || '비정기 매치'}</span>
+                                </div>
+                                <button 
+                                    onClick={handleSaveCurrentIrregular}
+                                    className="px-2.5 py-1 bg-purple-600 text-white rounded-lg text-[9px] font-black shrink-0 hover:bg-purple-700 transition-colors shadow-sm active:scale-95"
+                                >
+                                    출석관리 시트 저장
+                                </button>
+                            </div>
+                        )}
                         
                         <div className="flex-1 overflow-y-auto overscroll-none no-scrollbar">
                             <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-sm px-3.5 py-1.5 shadow-[0_10px_20px_-15px_rgba(0,0,0,0.08)] border-b border-gray-50">
@@ -434,15 +1115,15 @@
                                             {filterMode === 'hold' && '보류자 명단'}
                                             {filterMode === 'unvoted' && '미투표 명단'}
                                         </h2>
-                                        {isAdmin && <button onClick={() => setShowResetModal(true)} className="px-1.5 py-0.5 bg-red-50 text-red-500 rounded text-[9px] font-black hover:bg-red-100">초기화</button>}
+                                        {isAdmin && <button onClick={() => setShowResetModal(true)} className="px-1.5 py-0.5 bg-red-50 text-red-500 rounded text-[9px] font-black hover:bg-red-100">투표 리셋</button>}
                                     </div>
                                     <div className="flex gap-1 text-[9px] font-black items-center">
                                         {filterMode !== 'all' ? (
                                             <button onClick={() => setFilterMode('all')} className="text-white bg-green-500 px-2.5 py-1 rounded-full shadow-md active:scale-95 transition-all text-[9px]">전체보기</button>
                                         ) : (
                                             <>
-                                                <button onClick={() => attendingCount > 0 && setFilterMode('attending')} className={`px-2 py-0.5 rounded-full transition-all active:scale-95 ${attendingCount > 0 ? 'text-green-500 bg-green-50 shadow-sm cursor-pointer hover:bg-green-100' : 'text-gray-300 bg-gray-50 cursor-default'}`}>{attendingCount} 참석</button>
-                                                <button onClick={() => holdCount > 0 && setFilterMode('hold')} className={`px-2 py-0.5 rounded-full transition-all active:scale-95 ${holdCount > 0 ? 'text-amber-500 bg-amber-50 shadow-sm cursor-pointer hover:bg-amber-100' : 'text-gray-300 bg-gray-50 cursor-default'}`}>{holdCount} 보류</button>
+                                                <button onClick={() => attendingCount > 0 && setFilterMode('attending')} className={`px-2 py-0.5 rounded-full transition-all active:scale-95 ${attendingCount > 0 ? 'text-green-600 bg-green-50 shadow-sm cursor-pointer hover:bg-green-100' : 'text-gray-300 bg-gray-50 cursor-default'}`}>{attendingCount} 참석</button>
+                                                <button onClick={() => holdCount > 0 && setFilterMode('hold')} className={`px-2 py-0.5 rounded-full transition-all active:scale-95 ${holdCount > 0 ? 'text-amber-600 bg-amber-50 shadow-sm cursor-pointer hover:bg-amber-100' : 'text-gray-300 bg-gray-50 cursor-default'}`}>{holdCount} 보류</button>
                                                 <button onClick={() => unvotedCount > 0 && setFilterMode('unvoted')} className={`px-2 py-0.5 rounded-full transition-all active:scale-95 font-black whitespace-nowrap ${unvotedCount > 0 ? 'text-orange-500 bg-orange-50 shadow-sm cursor-pointer hover:bg-orange-100' : 'text-gray-300 bg-gray-50 cursor-default'}`}>{unvotedCount} 미투표</button>
                                             </>
                                         )}
@@ -450,7 +1131,7 @@
                                 </div>
                             </div>
                             
-                            <div className="p-3.5 space-y-2 pb-28 md:pb-8">
+                            <div className="p-3.5 space-y-2 pb-24 md:pb-8">
                                 {filteredMembers.length === 0 ? (
                                     <div className="py-12 text-center flex flex-col items-center gap-3">
                                         <div className="w-12 h-12 bg-gray-50 rounded-full flex items-center justify-center"><Icon name="SearchX" className="w-6 h-6 text-gray-200" /></div>
@@ -470,7 +1151,8 @@
                                             <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-[11px] shadow-sm ${member.gender === '남' ? 'bg-blue-100 text-blue-600' : 'bg-orange-100 text-orange-600'}`}>{member.gender}</div>
                                             <div className="flex flex-col text-left">
                                                 <div className="flex items-center gap-1.5 text-left">
-                                                    <span className={`font-bold text-sm ${member.isAttending === true ? 'text-green-700' : member.isAttending === false ? 'text-red-400 opacity-60' : member.isAttending === "hold" ? 'text-amber-600 font-black' : 'text-gray-500'}`}>{member.name}</span>
+                                                    <span className={`font-bold text-sm ${member.isAttending === true ? 'text-green-700' : member.isAttending === false ? 'text-red-400 opacity-60' : member.isAttending === "hold" ? 'text-amber-600 font-black' : 'text-gray-600'}`}>{member.name}</span>
+                                                    {member.isGuest && <span className="text-[8px] bg-orange-100 text-orange-600 font-black px-1 rounded">용병</span>}
                                                     {isAdmin && <span className="text-[9px] font-black text-gray-300 bg-gray-50 px-1.5 py-0.5 rounded">Lv.{member.level}</span>}
                                                 </div>
                                             </div>
@@ -487,122 +1169,1268 @@
                         </div>
                     </div>
 
-                    {/* 메인 영역 */}
-                    <div className={`flex-1 flex flex-col h-full overflow-hidden ${activeTab !== 'match' ? 'hidden md:flex' : 'flex'}`}>
-                        {isAdmin ? (
-                            <>
-                                <div className="bg-white border-b border-gray-100 px-4 md:px-8 flex gap-6 sticky top-0 z-10 shadow-sm text-sm font-bold shrink-0">
-                                    <button onClick={() => setMainTab('match')} className={`py-4 border-b-2 transition-all ${mainTab === 'match' ? 'border-green-500 text-green-600' : 'border-transparent text-gray-400'}`}>팀 매칭 결과</button>
-                                    <button onClick={() => setMainTab('manage')} className={`py-4 border-b-2 transition-all ${mainTab === 'manage' ? 'border-green-500 text-green-600' : 'border-transparent text-gray-400'}`}>멤버 DB 관리</button>
-                                </div>
-                                <div className="flex-1 overflow-y-auto no-scrollbar p-4 pb-28 md:p-8 md:pb-8">
-                                    {mainTab === 'match' ? (
-                                        <div className="animate-in fade-in duration-500 text-center">
-                                            <h2 className="text-xl md:text-2xl font-black mb-1 leading-tight break-keep text-gray-800">{matchedTeams ? "짜잔! 황금 밸런스 팀 탄생! 🎉" : "운명적인 팀원은 누구? 지금 바로 확인하기!"}</h2>
-                                            <p className="text-gray-400 text-[11px] md:text-xs font-medium mb-6 uppercase tracking-tight break-keep">{matchedTeams ? "성별과 실력을 고려해 최상의 조합을 찾았습니다." : "오늘 우리 팀의 라인업을 확인해보세요."}</p>
-                                            
-                                            {}
-                                            <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-gray-100 mb-6 mx-auto max-lg text-left">
-                                                <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-                                                    <div className="flex items-center gap-3"><label className="text-[10px] font-black text-gray-300 uppercase tracking-tighter whitespace-nowrap">매치 방식</label><div className="flex gap-1.5">{[2, 3, 4].map(num => (
+                    {/* 메인 뷰포트 영역 (모바일에서는 'vote'가 아닐 때 전체화면 노출, PC에서는 우측 상시 노출) */}
+                    <div className={`flex-1 flex flex-col h-full overflow-hidden ${activeTab === 'vote' ? 'hidden md:flex' : 'flex'}`}>
+                        {/* 상단 통합 메뉴 바 */}
+                        <div className="bg-white border-b border-gray-100 px-4 md:px-8 flex items-center justify-between sticky top-0 z-10 shadow-sm shrink-0">
+                            <div className="flex gap-4 md:gap-8 overflow-x-auto no-scrollbar text-xs md:text-sm font-bold">
+                                <button onClick={() => handleTabSwitch('match')} className={`py-4 border-b-2 whitespace-nowrap transition-all flex items-center gap-1.5 ${mainTab === 'match' ? 'border-green-500 text-green-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                                    <span>⚽</span> 오늘의 팀
+                                </button>
+                                <button onClick={() => handleTabSwitch('rank')} className={`py-4 border-b-2 whitespace-nowrap transition-all flex items-center gap-1.5 ${mainTab === 'rank' ? 'border-green-500 text-green-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                                    <span>🏆</span> 출석왕
+                                </button>
+                                <button onClick={() => handleTabSwitch('fee')} className={`py-4 border-b-2 whitespace-nowrap transition-all flex items-center gap-1.5 ${mainTab === 'fee' ? 'border-green-500 text-green-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                                    <span>💰</span> 회비
+                                </button>
+                                <button onClick={() => handleTabSwitch('manage')} className={`py-4 border-b-2 whitespace-nowrap transition-all flex items-center gap-1.5 ${mainTab === 'manage' ? 'border-green-500 text-green-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+                                    <span>⚙️</span> 멤버 관리
+                                </button>
+                            </div>
+                            
+                            <div className="flex items-center gap-2">
+                                {isAdmin ? (
+                                    <button 
+                                        onClick={handleLogout} 
+                                        className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200/70 px-3 py-1.5 rounded-full font-black hover:bg-emerald-100 transition-all flex items-center justify-center gap-1.5 leading-none shadow-xs"
+                                    >
+                                        <Icon name="ShieldCheck" className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                                        <span>관리자 해제</span>
+                                    </button>
+                                ) : (
+                                    <button 
+                                        onClick={() => setShowAdminModal(true)} 
+                                        className="text-[10px] bg-green-50 text-green-600 border border-green-200/60 px-3 py-1.5 rounded-full font-black hover:bg-green-100 transition-all flex items-center justify-center gap-1.5 leading-none shadow-xs"
+                                    >
+                                        <Icon name="Lock" className="w-3.5 h-3.5 text-green-600 shrink-0" />
+                                        <span>관리자</span>
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* 본문 탭별 콘텐츠 영역 */}
+                        <div className="flex-1 overflow-y-auto no-scrollbar p-4 pb-24 md:p-8 md:pb-8">
+                            {/* 1. 오늘의 팀 탭 */}
+                            {mainTab === 'match' && (
+                                <div className="animate-in fade-in duration-300">
+                                    <h2 className="text-xl md:text-2xl font-black mb-2 text-gray-800 tracking-tight">
+                                        {matchedTeams ? "짜잔! 황금 밸런스 팀 탄생! 🎉" : "운명적인 팀원은 누구? 지금 바로 확인하기!"}
+                                    </h2>
+                                    <p className="text-gray-400 text-[11px] md:text-xs font-medium mb-6 uppercase tracking-tight break-keep">
+                                        {matchedTeams ? "성별과 실력을 고려해 최상의 밸런스를 계산했습니다." : "오늘 참석한 멤버들로 완벽한 밸런스 매치를 시작하세요."}
+                                    </p>
+                                    
+                                    <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-gray-100 mb-6 mx-auto max-w-2xl text-left">
+                                        <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                                            <div className="flex items-center gap-3">
+                                                <label className="text-[10px] font-black text-gray-300 uppercase tracking-tighter whitespace-nowrap">매치 방식</label>
+                                                <div className="flex gap-1.5">
+                                                    {[2, 3, 4].map(num => (
                                                         <button key={num} onClick={() => { setTeamCount(num); setMatchedTeams(null); }} className={`px-4 py-1.5 rounded-lg font-black text-[11px] transition-all ${teamCount === num ? 'bg-green-600 text-white shadow-md' : 'bg-gray-50 text-gray-400 hover:bg-gray-100'}`}>{num}파전</button>
-                                                    ))}</div></div>
-                                                    <button onClick={generateTeams} disabled={isMatching} className="w-full md:w-auto bg-green-500 text-white px-6 py-2.5 rounded-xl font-black text-xs shadow-lg active:scale-95 transition-all uppercase tracking-tight">{isMatching ? '분석 중...' : '팀 매칭 시작'}</button>
-                                                </div>
-                                                <div className="mt-4 space-y-2">
-                                                    {attendingCount < teamCount * 5 && (
-                                                        <div className="flex items-center gap-2 text-red-500 text-[10px] font-black bg-red-50 p-3 rounded-xl border border-red-100">
-                                                            <Icon name="AlertCircle" className="w-4 h-4" /> 
-                                                            <span>인원이 부족합니다. {teamCount}파전은 최소 {teamCount * 5}명이 필요합니다. (현재 참석 {attendingCount}명)</span>
-                                                        </div>
-                                                    )}
-                                                    {holdCount > 0 && (
-                                                        <div className="flex items-center gap-2 text-amber-600 text-[10px] font-black bg-amber-50 p-3 rounded-xl border border-amber-100">
-                                                            <Icon name="Info" className="w-4 h-4" />
-                                                            <span>보류 상태인 {holdCount}명은 팀 매칭에서 제외됩니다.</span>
-                                                        </div>
-                                                    )}
+                                                    ))}
                                                 </div>
                                             </div>
-
-                                            {}
-                                            {matchedTeams && (
-                                                <div className={`mx-auto space-y-6 ${matchedTeams.length === 3 ? 'max-w-5xl' : 'max-w-3xl'}`}>
-                                                    <div className="flex justify-end"><button onClick={handleShareText} className="flex items-center gap-2 px-4 py-2 bg-[#FEE500] text-[#371D1E] rounded-xl font-black shadow-sm text-[11px] active:scale-95 transition-all hover:bg-[#F4DC00]"><Icon name="Share2" className="w-3.5 h-3.5" /> 결과 텍스트 복사</button></div>
-                                                    <div className={`grid grid-cols-1 gap-4 ${matchedTeams.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2 max-w-4xl mx-auto'}`}>
-                                                        {matchedTeams.map((team, idx) => (
-                                                            <div key={idx} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden text-left border-t-4 border-t-green-600">
-                                                                <div className="bg-green-50/50 p-4 flex justify-between items-center text-green-700 font-black"><h3 className="text-base uppercase tracking-tighter">{team.name}</h3><span className="text-[9px] font-black bg-white text-green-600 border border-green-200 px-2 py-0.5 rounded-full shadow-sm">평균 {(team.totalLevel / (team.players.length || 1)).toFixed(2)}</span></div>
-                                                                <div className="px-4 py-2 bg-gray-50 flex justify-between text-[9px] font-black text-gray-400 border-b border-gray-100 uppercase tracking-tighter"><span>{team.players.length}명 참여</span><span>남 {team.mCount} / 여 {team.fCount}</span></div>
-                                                                <div className="p-2 space-y-1 bg-white">{team.players.map(p => (<div key={p.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg transition-colors text-left"><div className="flex items-center gap-2"><span className={`text-[8px] font-black w-4 h-4 flex items-center justify-center rounded-full ${p.gender === '남' ? 'bg-blue-50 text-blue-500' : 'bg-orange-100 text-orange-600'}`}>{p.gender}</span><span className="font-bold text-gray-700 text-xs">{p.name}</span></div><span className="text-[9px] font-black text-gray-300 tracking-tighter">Lv.{p.level}</span></div>))}</div>
-                                                            </div>
-                                                        ))}
-                                                    </div>
+                                            <button onClick={generateTeams} disabled={isMatching} className="w-full md:w-auto bg-green-500 text-white px-6 py-2.5 rounded-xl font-black text-xs shadow-lg active:scale-95 transition-all uppercase tracking-tight hover:bg-green-600">
+                                                {isMatching ? '분석 중...' : '팀 매칭 시작 ⚽'}
+                                            </button>
+                                        </div>
+                                        <div className="mt-4 space-y-2">
+                                            {attendingCount < teamCount * 5 && (
+                                                <div className="flex items-center gap-2 text-red-500 text-[10px] font-black bg-red-50 p-3 rounded-xl border border-red-100">
+                                                    <Icon name="AlertCircle" className="w-4 h-4" /> 
+                                                    <span>인원이 부족합니다. {teamCount}파전은 최소 {teamCount * 5}명이 필요합니다. (현재 참석 {attendingCount}명)</span>
+                                                </div>
+                                            )}
+                                            {holdCount > 0 && (
+                                                <div className="flex items-center gap-2 text-amber-600 text-[10px] font-black bg-amber-50 p-3 rounded-xl border border-amber-100">
+                                                    <Icon name="Info" className="w-4 h-4" />
+                                                    <span>보류 상태인 {holdCount}명은 팀 매칭에서 제외됩니다.</span>
                                                 </div>
                                             )}
                                         </div>
-                                    ) : (
-                                        <div className="animate-in fade-in duration-300 max-w-2xl mx-auto text-left">
-                                            <h2 className="text-xl font-black mb-6 text-gray-800 uppercase tracking-tighter">정기멤버 관리 <span className="text-gray-300 text-sm font-bold ml-2">({members.filter(m => !m.isGuest).length})</span></h2>
-                                            <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-gray-100">
-                                                <div className="mb-6 bg-gray-50/50 p-4 rounded-xl border border-gray-100 text-center">
-                                                    <h3 className="text-[9px] font-black text-gray-400 mb-3 uppercase tracking-widest text-center">신규 멤버 등록</h3>
-                                                    <div className="flex flex-col md:flex-row gap-2">
-                                                        <input type="text" placeholder="이름" className="border border-gray-200 p-2 rounded-lg md:w-28 outline-none focus:border-green-500 font-bold text-xs bg-white shadow-inner" value={newMember.name} onChange={e => setNewMember({...newMember, name: e.target.value})} />
-                                                        <div className="flex gap-2 flex-1">
-                                                            <div className="flex gap-1 bg-white border border-gray-100 p-1 rounded-lg flex-1 shadow-sm text-center">
-                                                                <button onClick={() => setNewMember({...newMember, gender: '남'})} className={`flex-1 py-1 rounded-md font-black text-[9px] transition-all ${newMember.gender === '남' ? 'bg-blue-500 text-white shadow-md' : 'text-blue-500 bg-transparent'}`}>남</button>
-                                                                <button onClick={() => setNewMember({...newMember, gender: '여'})} className={`flex-1 py-1 rounded-md font-black text-[9px] transition-all ${newMember.gender === '여' ? 'bg-orange-500 text-white shadow-md' : 'text-orange-500 bg-transparent'}`}>여</button>
-                                                            </div>
-                                                            <select className="border border-gray-200 p-2 rounded-lg flex-1 font-black bg-white outline-none focus:border-green-500 text-[10px] shadow-sm cursor-pointer text-center" value={newMember.level} onChange={e => setNewMember({...newMember, level: Number(e.target.value)})}>{[1,2,3,4,5].map(v => <option key={v} value={v}>Lv.{v}</option>)}</select>
+                                    </div>
+
+                                    {matchedTeams && (
+                                        <div className={`mx-auto space-y-6 ${matchedTeams.length === 3 ? 'max-w-5xl' : 'max-w-3xl'}`}>
+                                            <div className="flex justify-end gap-2">
+                                                <button onClick={handleShareText} className="flex items-center gap-2 px-4 py-2 bg-[#FEE500] text-[#371D1E] rounded-xl font-black shadow-sm text-[11px] active:scale-95 transition-all hover:bg-[#F4DC00]">
+                                                    <Icon name="Share2" className="w-3.5 h-3.5" /> 결과 텍스트 복사
+                                                </button>
+                                            </div>
+                                            <div className={`grid grid-cols-1 gap-4 ${matchedTeams.length === 3 ? 'md:grid-cols-3' : 'md:grid-cols-2 max-w-4xl mx-auto'}`}>
+                                                {matchedTeams.map((team, idx) => (
+                                                    <div key={idx} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden text-left border-t-4 border-t-green-600">
+                                                        <div className="bg-green-50/50 p-4 flex justify-between items-center text-green-700 font-black">
+                                                            <h3 className="text-base uppercase tracking-tighter">{team.name}</h3>
+                                                            <span className="text-[9px] font-black bg-white text-green-600 border border-green-200 px-2 py-0.5 rounded-full shadow-sm">평균 {(team.totalLevel / (team.players.length || 1)).toFixed(2)}</span>
                                                         </div>
-                                                        <button onClick={() => { if (!newMember.name.trim()) return; const newId = Date.now(); const memberToAdd = { ...newMember, id: newId, isGuest: false, isAttending: null }; setMembers([...members, memberToAdd]); setNewMember({ name: '', gender: '남', level: 3 }); if (SHEET_API_URL) fetch(SHEET_API_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'add', name: memberToAdd.name, gender: memberToAdd.gender, level: `Lv${memberToAdd.level}` }) }).then(() => notify("DB 등록 완료!")); }} className="bg-gray-800 text-white px-5 py-2 rounded-lg font-black hover:bg-black transition-all shadow-sm active:scale-95 text-[10px] uppercase">등록</button>
-                                                    </div>
-                                                </div>
-                                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-left">{sortedMembers.filter(m => !m.isGuest).map(member => (
-                                                    <div key={member.id} className="flex justify-between items-center p-2.5 border border-gray-100 rounded-xl hover:border-green-100 hover:bg-green-50/10 transition-all group text-left">
-                                                        <div className="flex items-center gap-2.5">
-                                                            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[8px] font-black shadow-sm ${member.gender === '남' ? 'bg-blue-50 text-blue-500' : 'bg-orange-100 text-orange-600'}`}>{member.gender}</span>
-                                                            <div className="flex items-center gap-2 text-left">
-                                                                <div className="font-bold text-gray-700 text-xs text-left">{member.name}</div>
-                                                                <select className="text-[8px] font-black border border-gray-100 rounded px-1 py-0.5 bg-white outline-none focus:border-green-300 cursor-pointer shadow-sm text-center" value={member.level} onChange={e => { setMembers(members.map(m => m.id === member.id ? { ...m, level: Number(e.target.value) } : m)); if (SHEET_API_URL) fetch(SHEET_API_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'update', name: member.name, level: `Lv${e.target.value}` }) }).then(() => notify(`${member.name}님 실력 수정 완료`)); }}>{[1,2,3,4,5].map(v => <option key={v} value={v}>Lv.{v}</option>)}</select>
-                                                            </div>
+                                                        <div className="px-4 py-2 bg-gray-50 flex justify-between text-[9px] font-black text-gray-400 border-b border-gray-100 uppercase tracking-tighter">
+                                                            <span>{team.players.length}명 참여</span>
+                                                            <span>남 {team.mCount} / 여 {team.fCount}</span>
                                                         </div>
-                                                        <button onClick={() => setShowDeleteModal(member)} className="p-1.5 text-gray-200 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100 bg-gray-50 rounded-lg"><Icon name="Trash2" className="w-3.5 h-3.5" /></button>
+                                                        <div className="p-2 space-y-1 bg-white">
+                                                            {team.players.map(p => (
+                                                                <div key={p.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded-lg transition-colors text-left">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className={`text-[8px] font-black w-4 h-4 flex items-center justify-center rounded-full ${p.gender === '남' ? 'bg-blue-50 text-blue-500' : 'bg-orange-100 text-orange-600'}`}>{p.gender}</span>
+                                                                        <span className="font-bold text-gray-700 text-xs">{p.name}</span>
+                                                                    </div>
+                                                                    <span className="text-[9px] font-black text-gray-300 tracking-tighter">Lv.{p.level}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
                                                     </div>
-                                                ))}</div>
+                                                ))}
                                             </div>
                                         </div>
                                     )}
                                 </div>
-                            </>
-                        ) : (
-                            <div className="flex flex-col items-center justify-center h-full p-10 text-center animate-in fade-in zoom-in-95">
-                                <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4 shadow-inner"><Icon name="Lock" className="w-8 h-8 text-gray-300" /></div>
-                                <h2 className="text-lg font-black text-gray-800 mb-2 border-b border-gray-100 pb-2 uppercase tracking-tighter">Admin Only</h2>
-                                <p className="text-xs text-gray-400 break-keep mb-6 font-medium">팀 매칭과 DB 관리는 관리자 전용 메뉴입니다.</p>
-                                <button onClick={() => setShowAdminModal(true)} className="bg-green-600 text-white px-8 py-3 rounded-xl font-black text-sm shadow-lg active:scale-95 transition-all uppercase tracking-tighter hover:bg-green-700">관리자 비밀번호 입력</button>
+                            )}
+
+                            {}
+                            {/* 2. 출석왕 & 히스토리 탭 */}
+                            {mainTab === 'rank' && (
+                                <div className="animate-in fade-in duration-300 max-w-4xl mx-auto text-left space-y-6">
+                                    {/* 상단 타이틀 영역 */}
+                                    <div className="pb-1 border-b border-gray-100/80">
+                                        <h2 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight flex items-center gap-2">
+                                            <span>잔디 냄새 제일 많이 맡은 사람? 🏃💨</span>
+                                        </h2>
+                                        <p className="text-xs text-gray-400 mt-1 font-medium">열정적으로 경기장을 누빈 출석 랭킹을 확인해보세요!</p>
+                                    </div>
+
+                                    {/* 기간 필터 컨트롤러 영역 */}
+                                    <div className="bg-white p-3.5 rounded-2xl border border-gray-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
+                                        {/* 필터 탭: 월별 조회 | 최근 3개월 (기본) | 최근 6개월 | 기간조회 */}
+                                        <div className="flex bg-gray-100 p-1 rounded-xl border border-gray-200/60 shadow-inner overflow-x-auto no-scrollbar shrink-0">
+                                            <button onClick={() => setRankPeriod('month')} className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all whitespace-nowrap ${rankPeriod === 'month' ? 'bg-white text-green-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>월별 조회</button>
+                                            <button onClick={() => setRankPeriod('3months')} className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all whitespace-nowrap ${rankPeriod === '3months' ? 'bg-white text-green-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>최근 3개월</button>
+                                            <button onClick={() => setRankPeriod('6months')} className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all whitespace-nowrap ${rankPeriod === '6months' ? 'bg-white text-green-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>최근 6개월</button>
+                                            <button onClick={() => setRankPeriod('custom')} className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all whitespace-nowrap ${rankPeriod === 'custom' ? 'bg-white text-green-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>기간조회</button>
+                                        </div>
+
+                                        {/* 세부 선택 인풋 영역 및 비정기 필터 */}
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                            {/* 월별 조회 선택 시 노출 */}
+                                            {rankPeriod === 'month' && (
+                                                <div className="flex items-center gap-2 animate-in fade-in zoom-in-95 duration-200">
+                                                    <span className="text-[11px] font-bold text-gray-400">조회 월:</span>
+                                                    <input 
+                                                        type="month" 
+                                                        value={selectedMonth} 
+                                                        onChange={e => setSelectedMonth(e.target.value)} 
+                                                        className="bg-white border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-black text-gray-700 outline-none focus:border-green-500 shadow-sm cursor-pointer"
+                                                    />
+                                                </div>
+                                            )}
+
+                                            {/* 기간조회 선택 시 노출 (시작월 ~ 종료월) */}
+                                            {rankPeriod === 'custom' && (
+                                                <div className="flex items-center gap-1.5 animate-in fade-in zoom-in-95 duration-200 flex-wrap">
+                                                    <span className="text-[11px] font-bold text-gray-400">기간 범위:</span>
+                                                    <input 
+                                                        type="month" 
+                                                        value={customStartMonth} 
+                                                        onChange={e => setCustomStartMonth(e.target.value)} 
+                                                        className="bg-white border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs font-black text-gray-700 outline-none focus:border-green-500 shadow-sm cursor-pointer"
+                                                    />
+                                                    <span className="text-gray-400 font-black text-xs">~</span>
+                                                    <input 
+                                                        type="month" 
+                                                        value={customEndMonth} 
+                                                        onChange={e => setCustomEndMonth(e.target.value)} 
+                                                        className="bg-white border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs font-black text-gray-700 outline-none focus:border-green-500 shadow-sm cursor-pointer"
+                                                    />
+                                                </div>
+                                            )}
+
+                                            {/* 현재 선택된 기간 가이드 라벨 */}
+                                            {(rankPeriod === '3months' || rankPeriod === '6months') && (
+                                                <span className="text-[11px] font-bold text-green-700 bg-green-50 px-2.5 py-1 rounded-lg border border-green-100">
+                                                    {rankPeriod === '3months' ? '최근 3개월 경기 자동 집계 중' : '최근 6개월 경기 자동 집계 중'}
+                                                </span>
+                                            )}
+
+                                            {/* 비정기 제외 토글 버튼 */}
+                                            <button 
+                                                onClick={() => setExcludeIrregular(prev => !prev)}
+                                                className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 border shadow-sm ${
+                                                    excludeIrregular 
+                                                        ? 'bg-purple-50 text-purple-700 border-purple-200' 
+                                                        : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
+                                                }`}
+                                            >
+                                                <span className={`w-2 h-2 rounded-full ${excludeIrregular ? 'bg-purple-600' : 'bg-gray-300'}`}></span>
+                                                비정기 제외
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* 상단 통계 카드 요약 */}
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
+                                            <span className="text-[10px] font-black text-gray-400 uppercase tracking-wider">조회 기간 매치 수</span>
+                                            <p className="text-2xl font-black text-gray-800 mt-1">{attendanceStats.totalMatches}<span className="text-xs font-bold text-gray-400 ml-1">회</span></p>
+                                        </div>
+                                        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
+                                            <span className="text-[10px] font-black text-green-600 uppercase tracking-wider">최다 출석 횟수</span>
+                                            <p className="text-2xl font-black text-green-600 mt-1">
+                                                {attendanceStats.list[0]?.count || 0}<span className="text-xs font-bold text-gray-400 ml-1">회</span>
+                                            </p>
+                                        </div>
+                                        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
+                                            <span className="text-[10px] font-black text-blue-600 uppercase tracking-wider">현재 등록 정기멤버</span>
+                                            <p className="text-2xl font-black text-blue-600 mt-1">{regularMemberList.length}<span className="text-xs font-bold text-gray-400 ml-1">명</span></p>
+                                        </div>
+                                        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
+                                            <span className="text-[10px] font-black text-purple-600 uppercase tracking-wider">평균 출석률</span>
+                                            <p className="text-2xl font-black text-purple-600 mt-1">
+                                                {attendanceStats.list.length > 0 ? Math.round(attendanceStats.list.reduce((acc, c) => acc + c.rate, 0) / attendanceStats.list.length) : 0}
+                                                <span className="text-xs font-bold text-gray-400 ml-1">%</span>
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {/* 1, 2, 3위 포디엄 (Podium) 영역 (동순위/공동순위 완벽 반영) */}
+                                    {attendanceStats.totalMatches > 0 && attendanceStats.rankGroups[1]?.length > 0 && (
+                                        <div className="bg-gradient-to-b from-green-50/50 to-white p-6 rounded-3xl border border-green-100 text-center">
+                                            <h3 className="text-xs font-black text-green-800 mb-6 uppercase tracking-widest flex items-center justify-center gap-1.5">
+                                                <span>✨</span> 기간 내 출석 TOP 명예의 전당 <span>✨</span>
+                                            </h3>
+                                            <div className="flex items-end justify-center gap-3 md:gap-8 max-w-lg mx-auto pt-4">
+                                                {/* 2위 단상 (1위 다음 순위의 공동 2위 그룹) */}
+                                                <div className="flex-1 flex flex-col items-center">
+                                                    <span className="text-2xl mb-1">🥈</span>
+                                                    {attendanceStats.rankGroups[2]?.length > 0 ? (
+                                                        <>
+                                                            <div className="font-black text-xs md:text-sm text-gray-800 truncate max-w-[90px] md:max-w-[120px]" title={attendanceStats.rankGroups[2].map(m => m.name).join(', ')}>
+                                                                {attendanceStats.rankGroups[2].length > 1 
+                                                                    ? `${attendanceStats.rankGroups[2][0].name} 외 ${attendanceStats.rankGroups[2].length - 1}명` 
+                                                                    : attendanceStats.rankGroups[2][0].name}
+                                                            </div>
+                                                            <div className="text-[10px] text-gray-400 font-bold mb-2">
+                                                                {attendanceStats.rankGroups[2][0].count}회 ({attendanceStats.rankGroups[2][0].rate}%)
+                                                            </div>
+                                                            <div className="w-full bg-slate-200 h-20 rounded-t-2xl flex flex-col items-center justify-center font-black text-slate-600 shadow-inner px-1">
+                                                                <span className="text-xs md:text-sm">2위</span>
+                                                                {attendanceStats.rankGroups[2].length > 1 && (
+                                                                    <span className="text-[8px] md:text-[9px] text-slate-500 font-bold">공동 {attendanceStats.rankGroups[2].length}명</span>
+                                                                )}
+                                                            </div>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <div className="font-bold text-xs text-gray-300">순위 없음</div>
+                                                            <div className="text-[9px] text-gray-300 font-bold mb-2">-</div>
+                                                            <div className="w-full bg-slate-100 h-16 rounded-t-2xl flex items-center justify-center font-bold text-slate-300 text-xs">
+                                                                -
+                                                            </div>
+                                                        </>
+                                                    )}
+                                                </div>
+
+                                                {/* 1위 단상 (금메달 - 단독 1위 또는 공동 1위) */}
+                                                <div className="flex-1 flex flex-col items-center -mt-4">
+                                                    <span className="text-4xl mb-1 animate-bounce">👑</span>
+                                                    <div className="font-black text-xs md:text-base text-yellow-800 bg-yellow-100 px-2.5 py-0.5 rounded-full mb-1 truncate max-w-[110px] md:max-w-[150px]" title={attendanceStats.rankGroups[1].map(m => m.name).join(', ')}>
+                                                        {attendanceStats.rankGroups[1].length > 1 
+                                                            ? `${attendanceStats.rankGroups[1][0].name} 외 ${attendanceStats.rankGroups[1].length - 1}명` 
+                                                            : attendanceStats.rankGroups[1][0].name}
+                                                    </div>
+                                                    <div className="text-xs text-green-600 font-black mb-2">
+                                                        {attendanceStats.rankGroups[1][0].count}회 ({attendanceStats.rankGroups[1][0].rate}%)
+                                                    </div>
+                                                    <div className="w-full bg-gradient-to-t from-yellow-400 to-amber-300 h-28 rounded-t-2xl flex flex-col items-center justify-center font-black text-yellow-900 shadow-md px-1">
+                                                        <span className="text-sm md:text-base font-black">1위</span>
+                                                        <span className="text-[9px] font-bold">
+                                                            {attendanceStats.rankGroups[1].length > 1 ? `공동 출석왕 (${attendanceStats.rankGroups[1].length}명)` : '출석왕'}
+                                                        </span>
+                                                    </div>
+                                                </div>
+
+                                                {/* 3위 단상 */}
+                                                <div className="flex-1 flex flex-col items-center">
+                                                    <span className="text-2xl mb-1">🥉</span>
+                                                    {attendanceStats.rankGroups[3]?.length > 0 ? (
+                                                        <>
+                                                            <div className="font-black text-xs md:text-sm text-gray-800 truncate max-w-[90px] md:max-w-[120px]" title={attendanceStats.rankGroups[3].map(m => m.name).join(', ')}>
+                                                                {attendanceStats.rankGroups[3].length > 1 
+                                                                    ? `${attendanceStats.rankGroups[3][0].name} 외 ${attendanceStats.rankGroups[3].length - 1}명` 
+                                                                    : attendanceStats.rankGroups[3][0].name}
+                                                            </div>
+                                                            <div className="text-[10px] text-gray-400 font-bold mb-2">
+                                                                {attendanceStats.rankGroups[3][0].count}회 ({attendanceStats.rankGroups[3][0].rate}%)
+                                                            </div>
+                                                            <div className="w-full bg-amber-100/90 h-16 rounded-t-2xl flex flex-col items-center justify-center font-black text-amber-800 shadow-inner px-1">
+                                                                <span className="text-xs md:text-sm">3위</span>
+                                                                {attendanceStats.rankGroups[3].length > 1 && (
+                                                                    <span className="text-[8px] md:text-[9px] text-amber-700 font-bold">공동 {attendanceStats.rankGroups[3].length}명</span>
+                                                                )}
+                                                            </div>
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <div className="font-bold text-xs text-gray-300">순위 없음</div>
+                                                            <div className="text-[9px] text-gray-300 font-bold mb-2">-</div>
+                                                            <div className="w-full bg-amber-50/50 h-14 rounded-t-2xl flex items-center justify-center font-bold text-gray-300 text-xs">
+                                                                -
+                                                            </div>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* 출석 랭킹 상세 테이블 */}
+                                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                                        <div className="p-4 bg-gray-50/60 border-b border-gray-100 flex items-center justify-between">
+                                            <h3 className="text-xs font-black text-gray-700">
+                                                정기멤버 출석 순위 <span className="text-green-600 font-bold ml-1">({regularMemberList.length}명 전원 집계)</span>
+                                            </h3>
+                                            <span className="text-[10px] text-gray-400 font-bold">
+                                                총 {attendanceStats.totalMatches}경기 기준 {excludeIrregular && '(정기 전용)'} (동률 시 공동 순위)
+                                            </span>
+                                        </div>
+                                        <div className="divide-y divide-gray-50">
+                                            {attendanceStats.list.map((item) => (
+                                                <div key={item.name} className="p-3.5 flex items-center justify-between hover:bg-gray-50/50 transition-colors">
+                                                    <div className="flex items-center gap-3">
+                                                        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-black ${item.rank === 1 ? 'bg-yellow-400 text-white shadow-sm' : item.rank === 2 ? 'bg-slate-300 text-white' : item.rank === 3 ? 'bg-amber-500 text-white' : 'text-gray-400'}`}>
+                                                            {item.rank}
+                                                        </span>
+                                                        <span className={`text-[8px] font-black w-4 h-4 flex items-center justify-center rounded-full ${item.gender === '남' ? 'bg-blue-50 text-blue-500' : 'bg-orange-100 text-orange-600'}`}>{item.gender}</span>
+                                                        <div>
+                                                            <span className="font-bold text-xs text-gray-800">{item.name}</span>
+                                                            {item.rank === 1 && item.count > 0 && (
+                                                                <span className="ml-1.5 text-[9px] bg-yellow-100 text-yellow-800 font-black px-1.5 py-0.5 rounded-full">
+                                                                    🥇 {attendanceStats.rankGroups[1]?.length > 1 ? '공동 출석왕' : '출석왕'}
+                                                                </span>
+                                                            )}
+                                                            {item.rank === 2 && attendanceStats.rankGroups[2]?.length > 1 && (
+                                                                <span className="ml-1.5 text-[9px] bg-slate-100 text-slate-700 font-bold px-1.5 py-0.5 rounded-full">
+                                                                    🥈 공동 2위
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex items-center gap-4">
+                                                        {/* 출석률 프로그레스 바 */}
+                                                        <div className="w-24 hidden sm:block bg-gray-100 h-2 rounded-full overflow-hidden">
+                                                            <div className="bg-green-500 h-full rounded-full transition-all duration-500" style={{ width: `${item.rate}%` }}></div>
+                                                        </div>
+                                                        <div className="text-right">
+                                                            <span className="text-xs font-black text-gray-800">{item.count}회</span>
+                                                            <span className="text-[10px] text-gray-400 ml-1.5 font-bold">({item.rate}%)</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    {/* 경기 히스토리 리스트 (접기/펼치기 아코디언) */}
+                                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                                        <button 
+                                            onClick={() => setIsHistoryExpanded(prev => !prev)}
+                                            className="w-full p-4 bg-gray-50/60 hover:bg-gray-100/60 transition-colors flex items-center justify-between text-left"
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-base">📅</span>
+                                                <h3 className="text-xs font-black text-gray-700">
+                                                    매치 히스토리 ({filteredHistory.length}회)
+                                                </h3>
+                                                <span className="text-[10px] font-bold text-gray-400">
+                                                    {isHistoryExpanded ? '클릭하여 접기' : '클릭하여 펼치기'}
+                                                </span>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                {excludeIrregular && (
+                                                    <span className="text-[9px] bg-purple-100 text-purple-700 font-black px-2 py-0.5 rounded-full">
+                                                        비정기 제외됨
+                                                    </span>
+                                                )}
+                                                <div className={`transition-transform duration-200 text-gray-400 ${isHistoryExpanded ? 'rotate-180' : ''}`}>
+                                                    <Icon name="ChevronDown" className="w-4 h-4" />
+                                                </div>
+                                            </div>
+                                        </button>
+
+                                        {isHistoryExpanded && (
+                                            <div className="p-4 border-t border-gray-100 animate-in fade-in duration-200 space-y-2.5">
+                                                {filteredHistory.length === 0 ? (
+                                                    <div className="py-6 text-center text-xs text-gray-400 font-bold">
+                                                        해당 조건에 기록된 매치가 없습니다.
+                                                    </div>
+                                                ) : (
+                                                    filteredHistory.map(hist => {
+                                                        const validRegularAttendees = (hist.attendees || []).filter(name =>
+                                                            regularMemberList.some(m => m.name === name)
+                                                        );
+                                                        return (
+                                                            <div key={hist.id} className="p-3 bg-gray-50/70 rounded-xl border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-2">
+                                                                <div className="text-left">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <span className="text-[10px] font-black bg-white px-2 py-0.5 rounded border border-gray-200 text-gray-600">{hist.date}</span>
+                                                                        <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${hist.matchType === '정기' ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700'}`}>
+                                                                            {hist.matchType || '정기'}
+                                                                        </span>
+                                                                        <span className="font-bold text-xs text-gray-800">{hist.title}</span>
+                                                                        <span className="text-[10px] text-green-600 font-black">(정기멤버 {validRegularAttendees.length}명)</span>
+                                                                    </div>
+                                                                    <div className="text-[10px] text-gray-500 mt-1 flex flex-wrap gap-1">
+                                                                        {validRegularAttendees.map(name => (
+                                                                            <span key={name} className="bg-white px-1.5 py-0.5 rounded text-gray-600 border border-gray-100">{name}</span>
+                                                                        ))}
+                                                                    </div>
+                                                                </div>
+                                                                {isAdmin && (
+                                                                    <button onClick={() => handleDeleteHistory(hist.id)} className="self-end md:self-center p-1.5 text-gray-300 hover:text-red-500 transition-colors" title="기록 삭제">
+                                                                        <Icon name="Trash2" className="w-3.5 h-3.5" />
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {}
+                            {/* 3. 회비 납부 현황 탭 */}
+                            {mainTab === 'fee' && (
+                                <div className="animate-in fade-in duration-300 max-w-4xl mx-auto text-left space-y-6">
+                                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                                        <div>
+                                            <h2 className="text-xl md:text-2xl font-black text-gray-800 tracking-tight flex items-center gap-2">
+                                                <span>회비 납부 현황 📊</span>
+                                            </h2>
+                                            <p className="text-xs text-gray-400 mt-1 font-medium">정규 회비, 일회비, 구장 예약 차감 혜택까지 투명하게 관리하세요.</p>
+                                        </div>
+                                        
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <input 
+                                                type="month" 
+                                                value={selectedMonth} 
+                                                onChange={e => setSelectedMonth(e.target.value)} 
+                                                className="bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-black text-gray-700 outline-none focus:border-green-500 shadow-sm cursor-pointer"
+                                            />
+                                            <button onClick={copyUnpaidReminder} className="px-3.5 py-2 bg-[#FEE500] text-[#371D1E] rounded-xl text-xs font-black shadow-sm hover:bg-[#F4DC00] active:scale-95 transition-all flex items-center gap-1.5">
+                                                <Icon name="MessageCircle" className="w-3.5 h-3.5" /> 미납 알림문 복사
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* 회비 현황 통계 카드 */}
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between">
+                                            <div className="min-h-[20px] flex items-center justify-between">
+                                                <span className="text-[10px] font-black text-emerald-600 uppercase tracking-wider">완료 (정규납부)</span>
+                                                {feeSummary.reservedDiscountCount > 0 && (
+                                                    <span className="text-[9px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-md font-bold">
+                                                        구장예약 {feeSummary.reservedDiscountCount}명
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <p className="text-2xl font-black text-emerald-600 mt-2">{feeSummary.paidCount}<span className="text-xs font-bold text-gray-400 ml-1">명</span></p>
+                                        </div>
+                                        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between">
+                                            <div className="min-h-[20px] flex items-center justify-between">
+                                                <span className="text-[10px] font-black text-amber-600 uppercase tracking-wider">일회비</span>
+                                                {feeSummary.singleCount > 0 && (
+                                                    <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md ${
+                                                        (feeSummary.singleCount - feeSummary.singlePaidCount) > 0 
+                                                            ? 'text-rose-600 bg-rose-50 border border-rose-200' 
+                                                            : 'text-emerald-700 bg-emerald-50 border border-emerald-200'
+                                                    }`}>
+                                                        {(feeSummary.singleCount - feeSummary.singlePaidCount) > 0 
+                                                            ? `${feeSummary.singleCount - feeSummary.singlePaidCount}명 미납` 
+                                                            : '전원 완납'}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <p className="text-2xl font-black text-amber-600 mt-2">{feeSummary.singleCount}<span className="text-xs font-bold text-gray-400 ml-1">명</span></p>
+                                        </div>
+                                        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between">
+                                            <div className="min-h-[20px] flex items-center">
+                                                <span className="text-[10px] font-black text-slate-500 uppercase tracking-wider">부상 (유예)</span>
+                                            </div>
+                                            <p className="text-2xl font-black text-slate-600 mt-2">{feeSummary.breakCount}<span className="text-xs font-bold text-gray-400 ml-1">명</span></p>
+                                        </div>
+                                        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between">
+                                            <div className="min-h-[20px] flex items-center">
+                                                <span className="text-[10px] font-black text-rose-500 uppercase tracking-wider">미납</span>
+                                            </div>
+                                            <p className="text-2xl font-black text-rose-500 mt-2">{feeSummary.unpaidCount}<span className="text-xs font-bold text-gray-400 ml-1">명</span></p>
+                                        </div>
+                                    </div>
+
+                                    {/* 납부율 프로그레스 및 모금 총액 카드 */}
+                                    <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="text-xs font-black text-gray-700">{selectedMonth}월 회비 징수율 (부상 유예 제외)</span>
+                                            <span className="text-xs font-black text-green-600">{feeSummary.paidRate}% 완료</span>
+                                        </div>
+                                        <div className="w-full bg-gray-100 h-3 rounded-full overflow-hidden">
+                                            <div className="bg-gradient-to-r from-emerald-500 via-green-500 to-amber-400 h-full rounded-full transition-all duration-500" style={{ width: `${feeSummary.paidRate}%` }}></div>
+                                        </div>
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between mt-3 text-[10px] text-gray-400 font-bold gap-2">
+                                            <div className="flex items-center gap-2 flex-wrap">
+                                                <span>총 징수액: <strong className="text-xs font-black text-gray-800">{feeSummary.collectedAmount.toLocaleString()}원</strong></span>
+                                                <span>(정규 {monthlyFeeAmount.toLocaleString()}원 / 구장예약 {(monthlyFeeAmount - RESERVED_DISCOUNT_AMOUNT).toLocaleString()}원 / 일회비 회당 {singleFeeAmount.toLocaleString()}원)</span>
+                                            </div>
+                                            {/* 관리자일 때만 금액 변경 링크 노출 */}
+                                            {isAdmin && (
+                                                <div className="flex items-center gap-2 animate-in fade-in duration-200">
+                                                    <button 
+                                                        onClick={() => {
+                                                            setFeeInputMonthly(monthlyFeeAmount);
+                                                            setFeeInputSingle(singleFeeAmount);
+                                                            setShowFeeConfigModal(true);
+                                                        }} 
+                                                        className="text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 hover:bg-emerald-100 transition-colors cursor-pointer font-black text-[10px] flex items-center gap-1"
+                                                    >
+                                                        ⚙️ 회비 기준 금액 변경
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* 멤버별 회비 납부 상태 체크 리스트 */}
+                                    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+                                        <div className="p-4 bg-gray-50/60 border-b border-gray-100 flex items-center justify-between">
+                                            <h3 className="text-xs font-black text-gray-700">멤버별 회비 납부 상태</h3>
+                                            <span className="text-[10px] text-gray-400 font-bold">
+                                                {isAdmin ? "배지를 클릭하여 상태 및 구장예약을 관리하세요" : "🔒 관리자만 상태를 변경할 수 있습니다"}
+                                            </span>
+                                        </div>
+                                        <div className="divide-y divide-gray-50">
+                                            {regularMemberList.map(member => {
+                                                const val = currentFeeStatus[member.name];
+                                                const entry = typeof val === 'string' 
+                                                    ? { status: val, reservedDiscount: false, singlePaid: false } 
+                                                    : (val || { status: 'unpaid', reservedDiscount: false, singlePaid: false });
+                                                const status = entry.status;
+                                                const hasDiscount = !!entry.reservedDiscount;
+                                                const isSinglePaid = !!entry.singlePaid;
+
+                                                // 해당 월 정기전 출석 횟수 및 일회비 계산
+                                                const monthAttends = feeSummary.monthAttendanceCounts[member.name] || 0;
+                                                const rawSingleFee = monthAttends * singleFeeAmount;
+                                                const finalSingleFee = hasDiscount ? Math.max(0, rawSingleFee - RESERVED_DISCOUNT_AMOUNT) : rawSingleFee;
+
+                                                return (
+                                                    <div key={member.id} className="p-3.5 flex flex-col sm:flex-row sm:items-center justify-between hover:bg-gray-50/40 transition-colors gap-2.5">
+                                                        <div className="flex items-center gap-2.5">
+                                                            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[8px] font-black shadow-sm ${member.gender === '남' ? 'bg-blue-50 text-blue-500' : 'bg-orange-100 text-orange-600'}`}>{member.gender}</span>
+                                                            <div className="flex items-center gap-2 flex-wrap">
+                                                                {isAdmin ? (
+                                                                    <button 
+                                                                        onClick={() => setSelectedFeeMember(member.name)}
+                                                                        className="flex items-center gap-1.5 hover:text-green-600 transition-colors group cursor-pointer text-left"
+                                                                        title="최근 6개월 회비 납부 이력 보기"
+                                                                    >
+                                                                        <span className="font-bold text-xs text-gray-800 group-hover:text-green-600 underline-offset-2 group-hover:underline">{member.name}</span>
+                                                                        <span className="text-[9px] font-bold text-gray-400 bg-gray-100 group-hover:bg-green-50 group-hover:text-green-600 px-1.5 py-0.5 rounded-md transition-colors flex items-center gap-0.5">
+                                                                            기록 📊
+                                                                        </span>
+                                                                    </button>
+                                                                ) : (
+                                                                    <span className="font-bold text-xs text-gray-800">{member.name}</span>
+                                                                )}
+                                                                
+                                                                {/* 구장예약 한 사람에게만 명확하게 배지 표시 */}
+                                                                {hasDiscount && (
+                                                                    <span className="text-[9px] font-bold px-2 py-0.5 rounded-full border bg-purple-50 text-purple-700 border-purple-200">
+                                                                        구장예약
+                                                                    </span>
+                                                                )}
+
+                                                                {/* 💡 일회비 대상자일 때: 출석 횟수 및 입금 여부 뱃지 노출 */}
+                                                                {status === 'single' && (
+                                                                    <div className="flex items-center gap-1.5 animate-in fade-in duration-200">
+                                                                        <span className="text-[10px] font-black px-2 py-0.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200">
+                                                                            {monthAttends}회 출석 · {finalSingleFee.toLocaleString()}원
+                                                                        </span>
+                                                                        {isSinglePaid ? (
+                                                                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 flex items-center gap-0.5">
+                                                                                <span>✅</span> 입금완료
+                                                                            </span>
+                                                                        ) : (
+                                                                            <span className="text-[9px] font-black px-1.5 py-0.5 rounded bg-rose-100 text-rose-600 flex items-center gap-0.5">
+                                                                                <span>⏳</span> 미입금
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                        
+                                                        {/* 4단계 상태 토글 버튼 그룹 및 입금확인/구장예약 토글 */}
+                                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                                            {/* 💡 일회비일 때 관리자에게 제공되는 입금 확인 토글 버튼 */}
+                                                            {isAdmin && status === 'single' && (
+                                                                <button
+                                                                    onClick={() => toggleSinglePaidStatus(member.name)}
+                                                                    className={`px-2 py-1 rounded-lg text-[9px] font-black transition-all flex items-center gap-1 border shadow-xs ${
+                                                                        isSinglePaid 
+                                                                            ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700 shadow-sm' 
+                                                                            : 'bg-amber-50 text-amber-700 border-amber-300 hover:bg-amber-100 active:scale-95'
+                                                                    }`}
+                                                                    title="일회비 계좌 입금 확인 토글"
+                                                                >
+                                                                    <span>{isSinglePaid ? '✅ 입금확인됨' : '💸 입금확인'}</span>
+                                                                </button>
+                                                            )}
+
+                                                            {/* 관리자 모드일 때 모든 멤버에게 구장예약 토글 버튼 노출 */}
+                                                            {isAdmin && (
+                                                                <button
+                                                                    onClick={() => toggleReservedDiscount(member.name)}
+                                                                    className={`px-2 py-1 rounded-lg text-[9px] font-black transition-all flex items-center gap-1 border shadow-xs ${
+                                                                        hasDiscount 
+                                                                            ? 'bg-purple-600 text-white border-purple-600 hover:bg-purple-700 shadow-sm' 
+                                                                            : 'bg-white text-gray-500 border-gray-200 hover:bg-purple-50 hover:text-purple-600'
+                                                                    }`}
+                                                                    title="구장 예약으로 인한 회비 5,000원 차감 토글"
+                                                                >
+                                                                    <span>🏟️ 구장예약</span>
+                                                                </button>
+                                                            )}
+
+                                                            <div className="flex bg-gray-100/90 p-0.5 rounded-xl border border-gray-200/60 shadow-inner overflow-x-auto no-scrollbar">
+                                                                <button 
+                                                                    onClick={() => setMemberFeeStatus(member.name, 'paid')} 
+                                                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all flex items-center gap-1 ${
+                                                                        status === 'paid' 
+                                                                            ? 'bg-emerald-500 text-white shadow-sm' 
+                                                                            : 'text-gray-400 hover:text-gray-600'
+                                                                    }`}
+                                                                >
+                                                                    <span className="text-[8px]">●</span> 완료
+                                                                </button>
+                                                                <button 
+                                                                    onClick={() => setMemberFeeStatus(member.name, 'single')} 
+                                                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all flex items-center gap-1 ${
+                                                                        status === 'single' 
+                                                                            ? 'bg-amber-500 text-white shadow-sm' 
+                                                                            : 'text-gray-400 hover:text-gray-600'
+                                                                    }`}
+                                                                >
+                                                                    <span className="text-[8px]">●</span> 일회비
+                                                                </button>
+                                                                <button 
+                                                                    onClick={() => setMemberFeeStatus(member.name, 'break')} 
+                                                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all flex items-center gap-1 ${
+                                                                        status === 'break' 
+                                                                            ? 'bg-slate-600 text-white shadow-sm' 
+                                                                            : 'text-gray-400 hover:text-gray-600'
+                                                                    }`}
+                                                                >
+                                                                    <span className="text-[8px]">●</span> 부상
+                                                                </button>
+                                                                <button 
+                                                                    onClick={() => setMemberFeeStatus(member.name, 'unpaid')} 
+                                                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-black transition-all flex items-center gap-1 ${
+                                                                        status === 'unpaid' 
+                                                                        ? 'bg-rose-500 text-white shadow-sm' 
+                                                                        : 'text-gray-400 hover:text-gray-600'
+                                                                    }`}
+                                                                >
+                                                                    <span className="text-[8px]">●</span> 미납
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {}
+                            {/* 4. 멤버 DB 관리 탭 */}
+                            {mainTab === 'manage' && (
+                                <div className="animate-in fade-in duration-300 max-w-2xl mx-auto text-left">
+                                    <h2 className="text-xl font-black mb-6 text-gray-800 uppercase tracking-tighter">
+                                        멤버 관리 <span className="text-gray-300 text-sm font-bold ml-2">({regularMemberList.length})</span>
+                                    </h2>
+                                    <div className="bg-white p-4 md:p-5 rounded-2xl shadow-sm border border-gray-100">
+                                        <div className="mb-6 bg-gray-50/50 p-4 rounded-xl border border-gray-100 text-center">
+                                            <h3 className="text-[9px] font-black text-gray-400 mb-3 uppercase tracking-widest text-center">신규 정기 멤버 등록</h3>
+                                            <div className="flex flex-col md:flex-row gap-2">
+                                                <input 
+                                                    type="text" 
+                                                    placeholder="이름" 
+                                                    className="border border-gray-200 p-2 rounded-lg md:w-28 outline-none focus:border-green-500 font-bold text-xs bg-white shadow-inner" 
+                                                    value={newMember.name} 
+                                                    onChange={e => setNewMember({...newMember, name: e.target.value})} 
+                                                />
+                                                <div className="flex gap-2 flex-1">
+                                                    <div className="flex gap-1 bg-white border border-gray-100 p-1 rounded-lg flex-1 shadow-sm text-center">
+                                                        <button onClick={() => setNewMember({...newMember, gender: '남'})} className={`flex-1 py-1 rounded-md font-black text-[9px] transition-all ${newMember.gender === '남' ? 'bg-blue-500 text-white shadow-md' : 'text-blue-500 bg-transparent'}`}>남</button>
+                                                        <button onClick={() => setNewMember({...newMember, gender: '여'})} className={`flex-1 py-1 rounded-md font-black text-[9px] transition-all ${newMember.gender === '여' ? 'bg-orange-500 text-white shadow-md' : 'text-orange-500 bg-transparent'}`}>여</button>
+                                                    </div>
+                                                    <select className="border border-gray-200 p-2 rounded-lg flex-1 font-black bg-white outline-none focus:border-green-500 text-[10px] shadow-sm cursor-pointer text-center" value={newMember.level} onChange={e => setNewMember({...newMember, level: Number(e.target.value)})}>
+                                                        {[1,2,3,4,5].map(v => <option key={v} value={v}>Lv.{v}</option>)}
+                                                    </select>
+                                                </div>
+                                                <button 
+                                                    type="button"
+                                                    onClick={() => {
+                                                        if (!newMember.name.trim()) {
+                                                            notify("이름을 입력해주세요.");
+                                                            return;
+                                                        }
+                                                        const created = {
+                                                            id: Date.now(),
+                                                            name: newMember.name.trim(),
+                                                            gender: newMember.gender,
+                                                            level: newMember.level,
+                                                            isAttending: null,
+                                                            isGuest: false
+                                                        };
+                                                        setMembers(prev => [...prev, created]);
+                                                        if (SHEET_API_URL) {
+                                                            fetch(SHEET_API_URL, {
+                                                                method: 'POST',
+                                                                mode: 'no-cors',
+                                                                body: JSON.stringify({ action: 'add', name: created.name, gender: created.gender, level: created.level })
+                                                            }).catch(() => {});
+                                                        }
+                                                        setNewMember({ name: '', gender: '남', level: 3 });
+                                                        notify(`${created.name} 멤버가 등록되었습니다.`);
+                                                    }}
+                                                    className="bg-green-600 text-white px-4 py-2 rounded-lg font-black text-xs shadow-md hover:bg-green-700 transition-colors shrink-0"
+                                                >
+                                                    추가
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {/* 멤버 목록 관리 */}
+                                        <div className="divide-y divide-gray-100 max-h-96 overflow-y-auto no-scrollbar">
+                                            {regularMemberList.map(m => (
+                                                <div key={m.id} className="py-3 flex items-center justify-between">
+                                                    <div className="flex items-center gap-2.5">
+                                                        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-[8px] font-black shadow-sm ${m.gender === '남' ? 'bg-blue-50 text-blue-500' : 'bg-orange-100 text-orange-600'}`}>{m.gender}</span>
+                                                        <span className="font-bold text-xs text-gray-800">{m.name}</span>
+                                                        <span className="text-[10px] text-gray-400 font-bold">Lv.{m.level}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-2">
+                                                        <select 
+                                                            value={m.level} 
+                                                            onChange={e => {
+                                                                const nextLvl = Number(e.target.value);
+                                                                setMembers(prev => prev.map(item => item.id === m.id ? { ...item, level: nextLvl } : item));
+                                                                if (SHEET_API_URL) {
+                                                                    fetch(SHEET_API_URL, {
+                                                                        method: 'POST',
+                                                                        mode: 'no-cors',
+                                                                        body: JSON.stringify({ action: 'update', name: m.name, level: nextLvl })
+                                                                    }).catch(() => {});
+                                                                }
+                                                                notify(`${m.name}님의 레벨이 Lv.${nextLvl}로 변경되었습니다.`);
+                                                            }}
+                                                            className="border border-gray-200 rounded-lg px-2 py-1 text-[10px] font-black bg-white"
+                                                        >
+                                                            {[1,2,3,4,5].map(lvl => (
+                                                                <option key={lvl} value={lvl}>Lv.{lvl}</option>
+                                                            ))}
+                                                        </select>
+                                                        <button 
+                                                            onClick={() => setShowDeleteModal(m)}
+                                                            className="p-1.5 text-gray-300 hover:text-red-500 transition-colors"
+                                                            title="멤버 삭제"
+                                                        >
+                                                            <Icon name="Trash2" className="w-3.5 h-3.5" />
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    {/* 📱 모바일 전용 하단 고정 네비게이션 바 (MD 미만 화면에서만 노출) */}
+                    <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-white/95 backdrop-blur-md border-t border-gray-100 px-2 py-1.5 shadow-[0_-4px_20px_rgba(0,0,0,0.06)] flex items-center justify-around">
+                        <button 
+                            onClick={() => handleTabSwitch('vote')}
+                            className={`flex flex-col items-center justify-center flex-1 py-1 rounded-xl transition-all ${activeTab === 'vote' ? 'text-green-600 font-black' : 'text-gray-400 font-bold'}`}
+                        >
+                            <span className="text-lg">🏃</span>
+                            <span className="text-[10px] mt-0.5 tracking-tight">투표 ({attendingCount})</span>
+                        </button>
+                        <button 
+                            onClick={() => handleTabSwitch('match')}
+                            className={`flex flex-col items-center justify-center flex-1 py-1 rounded-xl transition-all ${activeTab === 'match' ? 'text-green-600 font-black' : 'text-gray-400 font-bold'}`}
+                        >
+                            <span className="text-lg">⚽</span>
+                            <span className="text-[10px] mt-0.5 tracking-tight">오늘의 팀</span>
+                        </button>
+                        <button 
+                            onClick={() => handleTabSwitch('rank')}
+                            className={`flex flex-col items-center justify-center flex-1 py-1 rounded-xl transition-all ${activeTab === 'rank' ? 'text-green-600 font-black' : 'text-gray-400 font-bold'}`}
+                        >
+                            <span className="text-lg">🏆</span>
+                            <span className="text-[10px] mt-0.5 tracking-tight">출석왕</span>
+                        </button>
+                        <button 
+                            onClick={() => handleTabSwitch('fee')}
+                            className={`flex flex-col items-center justify-center flex-1 py-1 rounded-xl transition-all ${activeTab === 'fee' ? 'text-green-600 font-black' : 'text-gray-400 font-bold'}`}
+                        >
+                            <span className="text-lg">💰</span>
+                            <span className="text-[10px] mt-0.5 tracking-tight">회비</span>
+                        </button>
+                        <button 
+                            onClick={() => handleTabSwitch('manage')}
+                            className={`flex flex-col items-center justify-center flex-1 py-1 rounded-xl transition-all ${activeTab === 'manage' ? 'text-green-600 font-black' : 'text-gray-400 font-bold'}`}
+                        >
+                            <span className="text-lg">⚙️</span>
+                            <span className="text-[10px] mt-0.5 tracking-tight">멤버 관리</span>
+                        </button>
+                    </div>
+
+                    {/* 회비 기준 금액 설정 커스텀 모달 */}
+                    {showFeeConfigModal && (
+                        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4 backdrop-blur-sm">
+                            <div className="bg-white rounded-3xl p-6 max-w-xs w-full shadow-2xl animate-in zoom-in-95 duration-200 border border-gray-100 text-left">
+                                <div className="w-10 h-10 rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center text-lg mb-3">💰</div>
+                                <h3 className="text-base font-black text-gray-800 mb-1">회비 기준 금액 변경</h3>
+                                <p className="text-[11px] text-gray-400 font-bold mb-4">정규 회비 및 일회비 기준 금액을 설정하세요.</p>
+                                
+                                <div className="space-y-3.5">
+                                    <div>
+                                        <label className="text-[10px] font-black text-gray-500 uppercase">월 정규 회비 (원)</label>
+                                        <div className="relative mt-1">
+                                            <input 
+                                                type="number" 
+                                                step="1000"
+                                                value={feeInputMonthly} 
+                                                onChange={e => setFeeInputMonthly(Number(e.target.value))} 
+                                                className="w-full border border-gray-200 bg-gray-50/50 p-2.5 rounded-xl font-black text-xs outline-none focus:border-green-500 shadow-sm"
+                                            />
+                                            <span className="absolute right-3 top-2.5 text-xs text-gray-400 font-bold">원</span>
+                                        </div>
+                                        <div className="text-[9px] text-gray-400 mt-1 font-bold">구장 예약 시 5,000원 자동 차감 ({Math.max(0, feeInputMonthly - 5000).toLocaleString()}원)</div>
+                                    </div>
+
+                                    <div>
+                                        <label className="text-[10px] font-black text-gray-500 uppercase">일회비 (정기매치 회당, 원)</label>
+                                        <div className="relative mt-1">
+                                            <input 
+                                                type="number" 
+                                                step="1000"
+                                                value={feeInputSingle} 
+                                                onChange={e => setFeeInputSingle(Number(e.target.value))} 
+                                                className="w-full border border-gray-200 bg-gray-50/50 p-2.5 rounded-xl font-black text-xs outline-none focus:border-amber-500 shadow-sm"
+                                            />
+                                            <span className="absolute right-3 top-2.5 text-xs text-gray-400 font-bold">원</span>
+                                        </div>
+                                        <div className="text-[9px] text-gray-400 mt-1 font-bold">해당 월 정기매치 출석 횟수에 맞춰 계산됩니다.</div>
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-2 mt-6">
+                                    <button 
+                                        type="button"
+                                        onClick={() => setShowFeeConfigModal(false)} 
+                                        className="flex-1 py-3 bg-gray-100 rounded-xl text-xs font-black text-gray-500 hover:bg-gray-200 transition-colors"
+                                    >
+                                        취소
+                                    </button>
+                                    <button 
+                                        type="button"
+                                        onClick={() => {
+                                            if (feeInputMonthly >= 0) setMonthlyFeeAmount(feeInputMonthly);
+                                            if (feeInputSingle >= 0) setSingleFeeAmount(feeInputSingle);
+                                            setShowFeeConfigModal(false);
+                                            notify("회비 기준 금액이 성공적으로 변경되었습니다! 👏");
+                                        }} 
+                                        className="flex-1 py-3 bg-green-600 text-white rounded-xl text-xs font-black shadow-md hover:bg-green-700 transition-colors"
+                                    >
+                                        저장 완료
+                                    </button>
+                                </div>
                             </div>
-                        )}
-                    </div>
+                        </div>
+                    )}
 
-                    {}
-                    <div className="md:hidden fixed bottom-0 w-full bg-white/90 backdrop-blur-md border-t border-gray-50 flex justify-around p-2 pb-safe z-50 shadow-lg shrink-0">
-                        <button onClick={() => handleTabChange('members')} className={`flex flex-col items-center py-2 flex-1 transition-all ${activeTab === 'members' ? 'text-green-600 scale-105 font-black' : 'text-gray-300'}`}>
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mb-0.5">
-                                <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                                <circle cx="9" cy="7" r="4" />
-                                <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-                                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                            </svg>
-                            <span className="text-[9px] uppercase font-black tracking-tighter">참석체크</span>
-                        </button>
-                        <button onClick={() => handleTabChange('match')} className={`flex flex-col items-center py-2 flex-1 transition-all ${activeTab === 'match' ? 'text-green-600 scale-105 font-black' : 'text-gray-300'}`}>
-                            <span className="text-xl mb-0.5">⚽</span>
-                            <span className="text-[9px] uppercase font-black tracking-tighter">팀매칭</span>
-                        </button>
-                    </div>
+                    {/* 💡 최근 6개월 회비 납부 내역 상세 모달 */}
+                    {selectedFeeMember && (() => {
+                        // 기준월(selectedMonth) 기준 최근 6개월 목록 산출
+                        const [sYear, sMonth] = (selectedMonth || currentYearMonth).split('-').map(Number);
+                        const recent6Months = [];
+                        let curY = sYear;
+                        let curM = sMonth;
+                        for (let i = 0; i < 6; i++) {
+                            const mmStr = String(curM).padStart(2, '0');
+                            recent6Months.push(`${curY}-${mmStr}`);
+                            curM -= 1;
+                            if (curM === 0) {
+                                curM = 12;
+                                curY -= 1;
+                            }
+                        }
 
+                        let completedCount = 0;
+                        let totalPaidAmount = 0;
+                        let totalMatchesAttended = 0;
+
+                        const monthDetails = recent6Months.map(mStr => {
+                            const val = feeRecords[mStr]?.[selectedFeeMember];
+                            const entry = typeof val === 'string'
+                                ? { status: val, reservedDiscount: false, singlePaid: false }
+                                : (val || { status: 'unpaid', reservedDiscount: false, singlePaid: false });
+
+                            // 해당 월 정기전 출석 횟수 계산
+                            const attends = (attendanceHistory || []).filter(h => 
+                                h.date && 
+                                h.date.startsWith(mStr) && 
+                                (h.matchType === '정기' || !h.matchType || h.matchType === '') &&
+                                Array.isArray(h.attendees) && 
+                                h.attendees.includes(selectedFeeMember)
+                            ).length;
+
+                            totalMatchesAttended += attends;
+
+                            let statusText = '미납';
+                            let statusColor = 'bg-rose-50 text-rose-600 border-rose-200';
+                            let amount = 0;
+                            let isPaid = false;
+
+                            if (entry.status === 'paid') {
+                                isPaid = true;
+                                completedCount += 1;
+                                amount = entry.reservedDiscount ? Math.max(0, monthlyFeeAmount - RESERVED_DISCOUNT_AMOUNT) : monthlyFeeAmount;
+                                totalPaidAmount += amount;
+                                statusText = entry.reservedDiscount ? '완료 (예약할인)' : '완료';
+                                statusColor = 'bg-emerald-50 text-emerald-700 border-emerald-200';
+                            } else if (entry.status === 'single') {
+                                const rawFee = attends * singleFeeAmount;
+                                const finalDue = entry.reservedDiscount ? Math.max(0, rawFee - RESERVED_DISCOUNT_AMOUNT) : rawFee;
+                                if (entry.singlePaid) {
+                                    isPaid = true;
+                                    completedCount += 1;
+                                    amount = finalDue;
+                                    totalPaidAmount += amount;
+                                    statusText = entry.reservedDiscount ? '일회비 완납(예약)' : '일회비 완납';
+                                    statusColor = 'bg-emerald-50 text-emerald-700 border-emerald-200';
+                                } else {
+                                    amount = finalDue;
+                                    statusText = `일회비 미입금 (${finalDue.toLocaleString()}원)`;
+                                    statusColor = 'bg-amber-50 text-amber-700 border-amber-200';
+                                }
+                            } else if (entry.status === 'break') {
+                                statusText = '부상 (유예)';
+                                statusColor = 'bg-slate-100 text-slate-600 border-slate-200';
+                            } else {
+                                statusText = '미납';
+                                statusColor = 'bg-rose-50 text-rose-600 border-rose-200';
+                            }
+
+                            return {
+                                month: mStr,
+                                attends,
+                                statusText,
+                                statusColor,
+                                amount,
+                                isPaid,
+                                rawStatus: entry.status,
+                                hasDiscount: !!entry.reservedDiscount
+                            };
+                        });
+
+                        return (
+                            <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4 backdrop-blur-sm">
+                                <div className="bg-white rounded-3xl p-5 md:p-6 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-200 border border-gray-100 text-left flex flex-col max-h-[85vh]">
+                                    {/* 헤더 */}
+                                    <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-3 shrink-0">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-9 h-9 rounded-2xl bg-emerald-50 text-emerald-600 flex items-center justify-center text-base font-black">
+                                                📊
+                                            </div>
+                                            <div>
+                                                <h3 className="text-sm font-black text-gray-800 flex items-center gap-1.5">
+                                                    <span>{selectedFeeMember}</span>
+                                                    <span className="text-[10px] text-gray-400 font-bold">회비 이력</span>
+                                                </h3>
+                                                <p className="text-[10px] text-gray-400 font-bold">
+                                                    기준월({selectedMonth}) 포함 최근 6개월
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <button 
+                                            onClick={() => setSelectedFeeMember(null)}
+                                            className="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+                                        >
+                                            <Icon name="X" className="w-4 h-4" />
+                                        </button>
+                                    </div>
+
+                                    {/* 상단 통계 카드 */}
+                                    <div className="grid grid-cols-3 gap-2 mb-3.5 shrink-0">
+                                        <div className="bg-emerald-50/70 p-2.5 rounded-xl border border-emerald-100 text-center">
+                                            <div className="text-[9px] font-black text-emerald-700">완납 횟수</div>
+                                            <div className="text-base font-black text-emerald-800 mt-0.5">
+                                                {completedCount}<span className="text-[10px] text-emerald-600">/6회</span>
+                                            </div>
+                                        </div>
+                                        <div className="bg-blue-50/70 p-2.5 rounded-xl border border-blue-100 text-center">
+                                            <div className="text-[9px] font-black text-blue-700">정기전 출석</div>
+                                            <div className="text-base font-black text-blue-800 mt-0.5">
+                                                {totalMatchesAttended}<span className="text-[10px] text-blue-600">회</span>
+                                            </div>
+                                        </div>
+                                        <div className="bg-amber-50/70 p-2.5 rounded-xl border border-amber-100 text-center">
+                                            <div className="text-[9px] font-black text-amber-700">납부 총액</div>
+                                            <div className="text-xs font-black text-amber-800 mt-1 truncate">
+                                                {totalPaidAmount.toLocaleString()}원
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* 6개월 리스트 본문 */}
+                                    <div className="overflow-y-auto no-scrollbar space-y-2 flex-1 pr-0.5">
+                                        {monthDetails.map(item => (
+                                            <div 
+                                                key={item.month} 
+                                                className={`p-3 rounded-2xl border transition-all flex items-center justify-between ${
+                                                    item.month === selectedMonth 
+                                                        ? 'bg-emerald-50/30 border-emerald-200' 
+                                                        : 'bg-gray-50/60 border-gray-100'
+                                                }`}
+                                            >
+                                                <div className="flex flex-col text-left">
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className="text-xs font-black text-gray-800">
+                                                            {item.month}
+                                                        </span>
+                                                        {item.month === selectedMonth && (
+                                                            <span className="text-[8px] bg-emerald-600 text-white font-black px-1.5 py-0.2 rounded-full">
+                                                                현재
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <span className="text-[10px] font-bold text-gray-400 mt-0.5">
+                                                        정기전 {item.attends}회 출석
+                                                    </span>
+                                                </div>
+
+                                                <div className="flex flex-col items-end gap-1">
+                                                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-lg border ${item.statusColor}`}>
+                                                        {item.statusText}
+                                                    </span>
+                                                    {item.isPaid && (
+                                                        <span className="text-[10px] font-black text-gray-600">
+                                                            {item.amount.toLocaleString()}원
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+
+                                    {/* 하단 닫기 버튼 */}
+                                    <button 
+                                        onClick={() => setSelectedFeeMember(null)}
+                                        className="w-full mt-3.5 py-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl text-xs font-black text-gray-600 transition-colors shrink-0"
+                                    >
+                                        닫기
+                                    </button>
+                                </div>
+                            </div>
+                        );
+                    })()}
+
+                    {/* 비정기 모드 사유 설정 모달 */}
+                    {showModeModal && (
+                        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4 backdrop-blur-sm">
+                            <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-200 border border-gray-100 text-left">
+                                <div className="w-10 h-10 rounded-2xl bg-purple-100 text-purple-600 flex items-center justify-center text-lg mb-3">⚡</div>
+                                <h3 className="text-base font-black text-gray-800 mb-1">비정기 매치 모드로 전환</h3>
+                                <p className="text-[11px] text-gray-400 font-bold mb-4">어떤 이벤트인지 사유를 입력해 주세요.</p>
+                                
+                                <div className="space-y-3">
+                                    <input 
+                                        type="text" 
+                                        value={modeInputNote} 
+                                        onChange={e => setModeInputNote(e.target.value)} 
+                                        placeholder="예: 타팀 친선 교류전, 주중 야간 번개 등"
+                                        autoFocus
+                                        className="w-full border border-purple-200 bg-purple-50/30 p-3 rounded-xl font-bold text-xs outline-none focus:border-purple-500 shadow-sm"
+                                    />
+                                    <div className="flex gap-1.5 flex-wrap">
+                                        {['주중 번개 매치', '타팀 친선 교류전', '주말 추가 풋살'].map(preset => (
+                                            <button 
+                                                key={preset}
+                                                type="button"
+                                                onClick={() => setModeInputNote(preset)}
+                                                className="text-[10px] font-bold bg-gray-100 hover:bg-purple-100 text-gray-600 hover:text-purple-700 px-2 py-1 rounded-lg transition-colors"
+                                            >
+                                                {preset}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-2 mt-6">
+                                    <button 
+                                        onClick={() => setShowModeModal(false)} 
+                                        className="flex-1 py-3 bg-gray-100 rounded-xl text-xs font-black text-gray-500 hover:bg-gray-200 transition-colors"
+                                    >
+                                        취소
+                                    </button>
+                                    <button 
+                                        onClick={() => {
+                                            const finalNote = modeInputNote.trim() || '비정기 번개 매치';
+                                            setCurrentMatchMode('irregular');
+                                            setIrregularTitle(finalNote);
+                                            setShowModeModal(false);
+                                            notify(`[${finalNote}] 비정기 모드로 전환되었습니다! ⚡`);
+                                        }} 
+                                        className="flex-1 py-3 bg-purple-600 text-white rounded-xl text-xs font-black shadow-md hover:bg-purple-700 transition-colors"
+                                    >
+                                        전환 시작
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 경기 기록 모달: 매치 출석 기록 */}
+                    {showRecordModal && (
+                        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4 backdrop-blur-sm">
+                            <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-200 border border-gray-100 text-left">
+                                <h3 className="text-base font-black text-gray-800 mb-4 flex items-center gap-2">
+                                    <span>📝</span> 매치 출석 기록
+                                </h3>
+                                <div className="space-y-3.5">
+                                    <div>
+                                        <label className="text-[10px] font-black text-gray-400 uppercase">매치 날짜</label>
+                                        <input 
+                                            type="date" 
+                                            value={recordForm.date} 
+                                            onChange={e => setRecordForm({...recordForm, date: e.target.value})} 
+                                            className="w-full mt-1 border border-gray-200 p-2.5 rounded-xl font-bold text-xs outline-none focus:border-green-500 bg-white shadow-sm"
+                                        />
+                                    </div>
+                                    
+                                    <div>
+                                        <label className="text-[10px] font-black text-gray-400 uppercase">매치 구분</label>
+                                        <div className="grid grid-cols-2 gap-2 mt-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => setRecordForm({...recordForm, matchType: '정기'})}
+                                                className={`py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 border ${
+                                                    recordForm.matchType === '정기'
+                                                        ? 'bg-green-600 text-white border-green-600 shadow-sm'
+                                                        : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                                                }`}
+                                            >
+                                                <span>⚽</span> 정기 매치
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setRecordForm({...recordForm, matchType: '비정기'})}
+                                                className={`py-2 px-3 rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 border ${
+                                                    recordForm.matchType === '비정기'
+                                                        ? 'bg-purple-600 text-white border-purple-600 shadow-sm'
+                                                        : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                                                }`}
+                                            >
+                                                <span>⚡</span> 비정기 매치
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {recordForm.matchType === '비정기' && (
+                                        <div className="animate-in fade-in slide-in-from-top-1 duration-200">
+                                            <div className="flex justify-between items-center mb-1">
+                                                <label className="text-[10px] font-black text-purple-700 uppercase">이벤트 / 사유 (선택)</label>
+                                                <span className="text-[9px] text-gray-400">교류전, 번개 등</span>
+                                            </div>
+                                            <input 
+                                                type="text" 
+                                                value={recordForm.eventNote} 
+                                                onChange={e => setRecordForm({...recordForm, eventNote: e.target.value})} 
+                                                className="w-full border border-purple-200 bg-purple-50/30 p-2.5 rounded-xl font-bold text-xs outline-none focus:border-purple-500 shadow-sm"
+                                                placeholder="예: 타팀 교류전, 주중 야간 번개 매치"
+                                            />
+                                        </div>
+                                    )}
+
+                                    <div>
+                                        <div className="flex justify-between items-center mb-1">
+                                            <label className="text-[10px] font-black text-gray-400 uppercase">참석자 선택 ({recordForm.selectedAttendees.length}명)</label>
+                                            <button onClick={() => {
+                                                const allNames = regularMemberList.map(m => m.name);
+                                                setRecordForm({...recordForm, selectedAttendees: recordForm.selectedAttendees.length === allNames.length ? [] : allNames});
+                                            }} className="text-[9px] text-green-600 font-black">전체선택/해제</button>
+                                        </div>
+                                        <div className="max-h-36 overflow-y-auto p-2 bg-gray-50 rounded-xl border border-gray-100 flex flex-wrap gap-1.5">
+                                            {regularMemberList.map(m => {
+                                                const isSel = recordForm.selectedAttendees.includes(m.name);
+                                                return (
+                                                    <button 
+                                                        key={m.id} 
+                                                        onClick={() => {
+                                                            const next = isSel ? recordForm.selectedAttendees.filter(n => n !== m.name) : [...recordForm.selectedAttendees, m.name];
+                                                            setRecordForm({...recordForm, selectedAttendees: next});
+                                                        }} 
+                                                        className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition-all ${isSel ? 'bg-green-600 text-white shadow-sm' : 'bg-white text-gray-600 border border-gray-200'}`}
+                                                    >
+                                                        {m.name}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="flex gap-2 mt-6">
+                                    <button onClick={() => setShowRecordModal(false)} className="flex-1 py-3 bg-gray-100 rounded-xl text-xs font-black text-gray-500 hover:bg-gray-200 transition-colors">취소</button>
+                                    <button onClick={() => {
+                                        if (recordForm.selectedAttendees.length === 0) {
+                                            notify("참석자를 최소 1명 이상 선택해주세요.");
+                                            return;
+                                        }
+                                        const cleanDate = recordForm.date;
+                                        const customId = generateMatchId(cleanDate, recordForm.matchType);
+                                        const customTitle = generateMatchTitle(cleanDate, recordForm.matchType, recordForm.eventNote);
+                                        
+                                        const newEntry = {
+                                            id: customId,
+                                            date: cleanDate,
+                                            matchType: recordForm.matchType, // '정기' 또는 '비정기'
+                                            eventNote: recordForm.eventNote.trim(),
+                                            title: customTitle,
+                                            attendees: recordForm.selectedAttendees
+                                        };
+                                        
+                                        setAttendanceHistory(prev => {
+                                            const filtered = prev.filter(h => h.id !== customId);
+                                            return [newEntry, ...filtered];
+                                        });
+
+                                        sendMatchToSheet(newEntry);
+                                        setShowRecordModal(false);
+                                        notify(`[${customTitle}] 출석 기록이 구글 시트에 저장되었습니다! ⚽`);
+                                    }} className="flex-1 py-3 bg-green-600 text-white rounded-xl text-xs font-black shadow-md hover:bg-green-700 transition-colors">저장 완료</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 모든 투표 초기화 모달 */}
                     {showResetModal && (
                         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[150] p-4 backdrop-blur-sm">
                             <div className="bg-white rounded-2xl p-6 max-w-xs w-full shadow-2xl animate-in zoom-in-95 duration-200 border border-gray-100">
@@ -619,6 +2447,7 @@
                         </div>
                     )}
 
+                    {/* 참석 상태 변경 확인 모달 */}
                     {showConfirmModal && (
                         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[110] p-4 backdrop-blur-sm">
                             <div className="bg-white rounded-3xl p-8 max-w-xs w-full shadow-2xl animate-in zoom-in-95 duration-200 border border-gray-100">
@@ -640,50 +2469,100 @@
                         </div>
                     )}
 
+                    {/* 관리자 암호 모달 */}
                     {showAdminModal && (
                         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4 backdrop-blur-sm">
                             <div className="bg-white rounded-[2rem] p-8 max-w-xs w-full shadow-2xl animate-in zoom-in-95 duration-200 border border-gray-100">
                                 <Icon name="Lock" className="text-green-600 mb-4 w-10 h-10 mx-auto" />
                                 <h3 className="text-lg font-black mb-2 text-gray-800 tracking-tight">관리자 인증</h3>
                                 <p className="text-xs text-gray-400 mb-6 uppercase tracking-widest font-medium">암호를 입력해 주세요</p>
-                                <input type="password" value={passwordInput} onChange={e => { setPasswordInput(e.target.value); setPasswordError(false); }} onKeyDown={e => e.key === 'Enter' && handleAdminLogin()} className={`w-full border-2 p-3.5 rounded-2xl mb-2 text-center text-xl outline-none font-black transition-all ${passwordError ? 'border-red-400 bg-red-50' : 'border-gray-50 focus:border-green-400 focus:bg-white'}`} placeholder="••••" autoFocus />
-                                <div className="h-5">{passwordError && <p className="text-red-500 text-[10px] font-bold animate-bounce">비밀번호가 일치하지 않습니다.</p>}</div>
-                                <div className="flex gap-3 mt-4">
-                                    <button onClick={() => { setShowAdminModal(false); setPasswordInput(''); setPasswordError(false); }} className="flex-1 py-4 bg-gray-100 rounded-2xl font-bold text-xs text-gray-400 active:scale-95 transition-all tracking-tight">취소</button>
-                                    <button onClick={handleAdminLogin} className="flex-1 py-4 bg-green-600 text-white rounded-2xl font-bold text-xs shadow-lg active:scale-95 transition-all tracking-tight">확인</button>
-                                </div>
+                                
+                                <form onSubmit={(e) => { e.preventDefault(); handleAdminLogin(); }}>
+                                    <input 
+                                        type="password" 
+                                        value={passwordInput} 
+                                        onChange={e => { setPasswordInput(e.target.value); setPasswordError(false); }} 
+                                        className={`w-full border-2 p-3.5 rounded-2xl mb-2 text-center text-xl outline-none font-black transition-all ${passwordError ? 'border-red-400 bg-red-50' : 'border-gray-50 focus:border-green-400 focus:bg-white'}`} 
+                                        placeholder="••••" 
+                                        autoFocus 
+                                    />
+                                    <div className="h-5">{passwordError && <p className="text-red-500 text-[10px] font-bold animate-bounce">비밀번호가 일치하지 않습니다.</p>}</div>
+                                    <div className="flex gap-3 mt-4">
+                                        <button 
+                                            type="button" 
+                                            onClick={() => { setShowAdminModal(false); setPasswordInput(''); setPasswordError(false); setPendingAdminAction(null); }} 
+                                            className="flex-1 py-4 bg-gray-100 rounded-2xl font-bold text-xs text-gray-400 active:scale-95 transition-all tracking-tight"
+                                        >
+                                            취소
+                                        </button>
+                                        <button 
+                                            type="submit" 
+                                            className="flex-1 py-4 bg-green-600 text-white rounded-2xl font-bold text-xs shadow-lg active:scale-95 transition-all tracking-tight"
+                                        >
+                                            확인
+                                        </button>
+                                    </div>
+                                </form>
                             </div>
                         </div>
                     )}
 
+                    {/* 멤버 삭제 모달 */}
                     {showDeleteModal && (
                         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[200] p-4 backdrop-blur-sm">
                             <div className="bg-white rounded-2xl p-6 max-w-xs w-full shadow-2xl animate-in zoom-in-95 duration-200 border border-gray-100">
                                 <Icon name="Trash2" className="w-10 h-10 text-red-500 mb-4 mx-auto" />
                                 <h3 className="text-sm font-black mb-1">멤버 삭제</h3>
-                                <p className="text-gray-400 font-bold text-[10px] mb-6 leading-tight break-keep"><span className="text-red-500 font-black">{showDeleteModal.name}</span>님을 DB에서 삭제할까요?<br/>구글 시트에서도 삭제됩니다.</p>
-                                <div className="flex gap-2 font-black text-xs"><button onClick={() => setShowDeleteModal(null)} className="flex-1 py-2.5 bg-gray-50 rounded-xl text-gray-400">취소</button><button onClick={() => { const member = showDeleteModal; setMembers(prev => prev.filter(m => m.id !== member.id)); if (SHEET_API_URL) fetch(SHEET_API_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'delete', name: member.name }) }); setShowDeleteModal(null); notify(`${member.name}님 삭제 완료`); }} className="flex-1 py-2.5 bg-red-500 text-white rounded-xl shadow-md">삭제</button></div>
+                                <p className="text-gray-400 font-bold text-[10px] mb-6 leading-tight break-keep"><span className="text-red-500 font-black">{showDeleteModal.name}</span>님을 DB에서 삭제할까요?</p>
+                                <div className="flex gap-2 font-black text-xs">
+                                    <button onClick={() => setShowDeleteModal(null)} className="flex-1 py-2.5 bg-gray-50 rounded-xl text-gray-400">취소</button>
+                                    <button onClick={() => { 
+                                        const member = showDeleteModal; 
+                                        setMembers(prev => prev.filter(m => m.id !== member.id)); 
+                                        if (SHEET_API_URL) {
+                                            fetch(SHEET_API_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify({ action: 'delete', name: member.name }) }).catch(() => {});
+                                        }
+                                        setShowDeleteModal(null); 
+                                        notify(`${member.name}님 삭제 완료`); 
+                                    }} className="flex-1 py-2.5 bg-red-500 text-white rounded-xl shadow-md">삭제</button>
+                                </div>
                             </div>
                         </div>
                     )}
 
+                    {/* 용병 추가 모달 */}
                     {showGuestModal && (
                         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4 backdrop-blur-sm">
                             <div className="bg-white rounded-[2.5rem] p-8 max-w-xs w-full shadow-2xl animate-in zoom-in-95 duration-200 border border-gray-100">
                                 <h3 className="text-base font-black mb-5 text-gray-800 uppercase tracking-tight">용병 추가 🏃‍♂️</h3>
                                 <div className="space-y-4">
-                                    <input type="text" value={guestInput.name} onChange={e => setGuestInput({...guestInput, name: e.target.value})} className="w-full border border-gray-100 p-2.5 rounded-lg outline-none focus:border-green-400 font-black text-xs bg-gray-50 shadow-inner" placeholder="이름 또는 별명" autoFocus />
+                                    <input 
+                                        type="text" 
+                                        value={guestInput.name} 
+                                        onChange={e => setGuestInput({...guestInput, name: e.target.value})} 
+                                        className="w-full border border-gray-100 p-2.5 rounded-lg outline-none focus:border-green-400 font-black text-xs bg-gray-50 shadow-inner" 
+                                        placeholder="이름 또는 별명" 
+                                        autoFocus 
+                                    />
                                     <div className="flex gap-2">
                                         <div className="flex gap-1 bg-white border border-gray-100 p-1 rounded-lg flex-1 shadow-sm">
                                             <button onClick={() => setGuestInput({...guestInput, gender: '남'})} className={`flex-1 py-1.5 rounded-md font-black text-[9px] transition-all ${guestInput.gender === '남' ? 'bg-blue-50 text-blue-500' : 'bg-transparent text-blue-300'}`}>남</button>
                                             <button onClick={() => setGuestInput({...guestInput, gender: '여'})} className={`flex-1 py-1.5 rounded-md font-black text-[9px] transition-all ${guestInput.gender === '여' ? 'bg-orange-500 text-white shadow-md' : 'text-orange-300'}`}>여</button>
                                         </div>
-                                        <select value={guestInput.level} onChange={e => setGuestInput({...guestInput, level: Number(e.target.value)})} className="flex-1 border border-gray-100 p-2.5 rounded-lg outline-none focus:border-green-400 bg-white font-black text-xs shadow-sm cursor-pointer">{[1,2,3,4,5].map(v => <option key={v} value={v}>Lv.{v}</option>)}</select>
+                                        <select value={guestInput.level} onChange={e => setGuestInput({...guestInput, level: Number(e.target.value)})} className="flex-1 border border-gray-100 p-2.5 rounded-lg outline-none focus:border-green-400 bg-white font-black text-xs shadow-sm cursor-pointer">
+                                            {[1,2,3,4,5].map(v => <option key={v} value={v}>Lv.{v}</option>)}
+                                        </select>
                                     </div>
                                 </div>
                                 <div className="flex gap-2 mt-8 font-black text-[11px]">
                                     <button onClick={() => { setShowGuestModal(false); setGuestInput({name:'', gender:'남', level:3}); }} className="flex-1 py-2.5 bg-gray-50 rounded-xl text-gray-400 uppercase tracking-tighter">취소</button>
-                                    <button onClick={() => { if (!guestInput.name.trim()) return; setMembers([...members, { ...guestInput, id: Date.now(), isGuest: true, isAttending: true }]); setGuestInput({ name: '', gender: '남', level: 3 }); setShowGuestModal(false); notify("용병이 추가되었습니다."); }} className="flex-1 py-2.5 bg-green-600 text-white rounded-xl shadow-md uppercase tracking-tighter">추가하기</button>
+                                    <button onClick={() => { 
+                                        if (!guestInput.name.trim()) return; 
+                                        setMembers([...members, { ...guestInput, id: Date.now(), isGuest: true, isAttending: true }]); 
+                                        setGuestInput({ name: '', gender: '남', level: 3 }); 
+                                        setShowGuestModal(false); 
+                                        notify("용병이 추가되었습니다."); 
+                                    }} className="flex-1 py-2.5 bg-green-600 text-white rounded-xl shadow-md uppercase tracking-tighter">추가하기</button>
                                 </div>
                             </div>
                         </div>
