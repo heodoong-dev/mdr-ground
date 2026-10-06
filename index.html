@@ -178,7 +178,7 @@
             });
 
             // 사용자 배포 구글 웹앱 URL
-            const SHEET_API_URL = "https://script.google.com/macros/s/AKfycbw8iZyyPo3jj7mT3wbqWS_MOnie9bP__ec0L5Zse61IkkgGdmO6veX8ouHqdPNQM-3f/exec";
+            const SHEET_API_URL = "https://script.google.com/macros/s/AKfycbyV1V28AE1ekzuV2gAWDzK8jvDK7g4Hw86rkHuL3hKojq-yrGHd2R-XFffDD9VdLdk/exec";
 
             useEffect(() => {
                 localStorage.setItem('mdr_attendance_history', JSON.stringify(attendanceHistory));
@@ -458,34 +458,32 @@
                 notify(`[${customTitle}] 출석 기록이 '출석관리' 시트에 저장되었습니다! ⚡`);
             };
 
-            // 월요일 리셋 시: 기존 참석자 명단이 있다면 자동 출석 저장 후 리셋
+            // 투표 리셋 시: 기존 참석자 명단이 있다면 최종 참석 명단으로 덮어쓰기(업데이트) 저장 후 리셋
             const executeReset = () => {
                 const attendingRegularMembers = members
                     .filter(m => !m.isGuest && m.isAttending === true)
                     .map(m => m.name);
 
                 let autoSaved = false;
-                // 참석자가 1명 이상 있는 경우 자동 저장 보장
+                // 참석자가 1명 이상 있는 경우 최종 참석 명단으로 무조건 덮어쓰기 갱신 보장
                 if (attendingRegularMembers.length > 0) {
                     const todayStr = new Date().toISOString().slice(0, 10);
                     const autoId = generateMatchId(todayStr, '정기');
                     const autoTitle = generateMatchTitle(todayStr, '정기');
                     
-                    // 기존에 동일 ID가 이미 있는지 중복 검사
-                    const alreadyExists = attendanceHistory.some(h => h.id === autoId);
-                    if (!alreadyExists) {
-                        const newRecord = {
-                            id: autoId,
-                            date: todayStr,
-                            matchType: '정기',
-                            eventNote: '',
-                            title: autoTitle,
-                            attendees: attendingRegularMembers
-                        };
-                        setAttendanceHistory(prev => [newRecord, ...prev]);
-                        sendMatchToSheet(newRecord);
-                        autoSaved = true;
-                    }
+                    const newRecord = {
+                        id: autoId,
+                        date: todayStr,
+                        matchType: '정기',
+                        eventNote: '',
+                        title: autoTitle,
+                        attendees: attendingRegularMembers
+                    };
+
+                    // 기존에 기록이 있더라도 최신 최종 명단으로 완벽히 덮어쓰기 (Upsert)
+                    setAttendanceHistory(prev => [newRecord, ...prev.filter(h => h.id !== autoId)]);
+                    sendMatchToSheet(newRecord);
+                    autoSaved = true;
                 }
 
                 // 투표 상태 초기화
@@ -497,7 +495,7 @@
                 setShowResetModal(false);
 
                 if (autoSaved) {
-                    notify(`출석 ${attendingRegularMembers.length}명이 시트에 자동 백업 저장된 후 투표가 리셋되었습니다! 👏`);
+                    notify(`최종 출석 ${attendingRegularMembers.length}명이 최신 상태로 시트에 업데이트 저장된 후 투표가 리셋되었습니다! 👏`);
                 } else {
                     notify("모든 투표 기록이 초기화되었습니다.");
                 }
@@ -787,10 +785,12 @@
                         if (entry.reservedDiscount) {
                             reservedDiscountCount++;
                         }
-                        // 실제 입금확인이 된 일회비만 수납 총액 및 완납자 수에 반영!
-                        if (entry.singlePaid) {
+                        // 💡 0회 참석인 경우 낼 회비가 없으므로 자동으로 완납 대상이 됨, 1회 이상인 경우 실제 입금확인 체크 여부 반영
+                        if (attends === 0 || entry.singlePaid) {
                             singlePaidCount++;
-                            collectedAmount += finalDue;
+                            if (attends > 0) {
+                                collectedAmount += finalDue;
+                            }
                         }
                     } else if (st === 'break') {
                         breakCount++;
@@ -801,7 +801,7 @@
 
                 // 납부 대상 인원 = 완료 + 일회비 + 미납 (부상은 유예)
                 const totalTarget = paidCount + singleCount + unpaidCount;
-                // 실제 완납율 = (정규완납 + 일회비입금완료) / 전체 대상
+                // 실제 완납율 = (정규완납 + 일회비완납) / 전체 대상
                 const paidRate = totalTarget > 0 ? Math.round(((paidCount + singlePaidCount) / totalTarget) * 100) : 0;
 
                 return { 
@@ -832,8 +832,11 @@
                         unpaidRegular.push(m.name);
                     } else if (st === 'single' && !entry.singlePaid) {
                         const attends = feeSummary.monthAttendanceCounts[m.name] || 0;
-                        const due = attends * singleFeeAmount - (entry.reservedDiscount ? RESERVED_DISCOUNT_AMOUNT : 0);
-                        unpaidSingle.push(`${m.name}(일회비 ${Math.max(0, due).toLocaleString()}원)`);
+                        // 💡 0회 참석인 회원은 청구액이 0원이므로 미납 독촉 명단에서 당연히 제외!
+                        if (attends > 0) {
+                            const due = attends * singleFeeAmount - (entry.reservedDiscount ? RESERVED_DISCOUNT_AMOUNT : 0);
+                            unpaidSingle.push(`${m.name}(일회비 ${Math.max(0, due).toLocaleString()}원)`);
+                        }
                     }
                 });
 
@@ -1184,9 +1187,16 @@
 
                     {/* 메인 뷰포트 영역 (모바일에서는 'vote'가 아닐 때 전체화면 노출, PC에서는 우측 상시 노출) */}
                     <div className={`flex-1 flex flex-col h-full overflow-hidden ${activeTab === 'vote' ? 'hidden md:flex' : 'flex'}`}>
-                        {/* 상단 통합 메뉴 바 */}
-                        <div className="bg-white border-b border-gray-100 px-4 md:px-8 flex items-center justify-between sticky top-0 z-10 shadow-sm shrink-0">
-                            <div className="flex gap-4 md:gap-8 overflow-x-auto no-scrollbar text-xs md:text-sm font-bold">
+                        {/* 상단 헤더 바 (모바일에서는 상단 탭 숨기고 로고+관리자 버튼만 노출, PC에서는 상단 메뉴 탭+관리자 노출) */}
+                        <div className="bg-white border-b border-gray-100 px-4 md:px-8 py-2 md:py-0 flex items-center justify-between sticky top-0 z-10 shadow-sm shrink-0">
+                            {/* 모바일 전용 로고 (PC에서는 md:hidden) */}
+                            <div className="md:hidden flex items-center gap-2">
+                                <span className="text-xl">⚽</span>
+                                <span className="text-base font-black text-green-600 tracking-tight">맛드레 그라운드</span>
+                            </div>
+
+                            {/* PC 전용 상단 메뉴 탭 바 (모바일에서는 hidden) */}
+                            <div className="hidden md:flex gap-4 md:gap-8 overflow-x-auto no-scrollbar text-xs md:text-sm font-bold">
                                 <button onClick={() => handleTabSwitch('match')} className={`py-4 border-b-2 whitespace-nowrap transition-all flex items-center gap-1.5 ${mainTab === 'match' ? 'border-green-500 text-green-600' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
                                     <span>⚽</span> 오늘의 팀
                                 </button>
@@ -1201,6 +1211,7 @@
                                 </button>
                             </div>
                             
+                            {/* 관리자 인증 / 해제 버튼 (PC 및 모바일 모두 우측 상단 상시 유지) */}
                             <div className="flex items-center">
                                 {isAdmin ? (
                                     <button 
@@ -1323,7 +1334,6 @@
                                 </div>
                             )}
 
-                            {}
                             {/* 2. 출석왕 & 히스토리 탭 */}
                             {mainTab === 'rank' && (
                                 <div className="animate-in fade-in duration-300 max-w-4xl mx-auto text-left space-y-6">
@@ -1603,20 +1613,41 @@
                                                         const validRegularAttendees = (hist.attendees || []).filter(name =>
                                                             regularMemberList.some(m => m.name === name)
                                                         );
+
+                                                        // 💡 title에 이미 포함된 중복 날짜(YYYY-MM-DD)와 '정기/비정기 매치' 텍스트를 정리하여 깔끔한 서브타이틀/이벤트명만 추출
+                                                        const cleanTitle = (() => {
+                                                            if (hist.eventNote && hist.eventNote.trim()) {
+                                                                return hist.eventNote.trim();
+                                                            }
+                                                            const rawTitle = (hist.title || '').trim();
+                                                            // 앞의 '2026-10-06 정기 매치', '2026-10-06 비정기 매치' 등 중복 패턴 제거
+                                                            let stripped = rawTitle.replace(/^\d{4}[-./]\d{1,2}[-./]\d{1,2}\s*/, '').trim();
+                                                            if (stripped.startsWith('정기 매치') || stripped.startsWith('정기매치')) {
+                                                                stripped = stripped.replace(/^정기\s*매치\s*/, '').trim();
+                                                            } else if (stripped.startsWith('비정기 매치') || stripped.startsWith('비정기매치')) {
+                                                                stripped = stripped.replace(/^비정기\s*매치\s*/, '').replace(/^\((.*)\)$/, '$1').trim();
+                                                            }
+                                                            return stripped;
+                                                        })();
+
                                                         return (
                                                             <div key={hist.id} className="p-3 bg-gray-50/70 rounded-xl border border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-2">
                                                                 <div className="text-left">
-                                                                    <div className="flex items-center gap-2">
-                                                                        <span className="text-[10px] font-black bg-white px-2 py-0.5 rounded border border-gray-200 text-gray-600">{hist.date}</span>
+                                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                                        <span className="text-[10px] font-black bg-white px-2 py-0.5 rounded border border-gray-200 text-gray-600 shadow-xs">{hist.date}</span>
                                                                         <span className={`text-[9px] font-black px-1.5 py-0.5 rounded ${hist.matchType === '정기' ? 'bg-green-100 text-green-700' : 'bg-purple-100 text-purple-700'}`}>
                                                                             {hist.matchType || '정기'}
                                                                         </span>
-                                                                        <span className="font-bold text-xs text-gray-800">{hist.title}</span>
-                                                                        <span className="text-[10px] text-green-600 font-black">(정기멤버 {validRegularAttendees.length}명)</span>
+                                                                        {cleanTitle ? (
+                                                                            <span className="font-bold text-xs text-gray-800 bg-white/60 px-1.5 py-0.2 rounded border border-gray-200/50">
+                                                                                {cleanTitle}
+                                                                            </span>
+                                                                        ) : null}
+                                                                        <span className="text-[10px] text-green-600 font-black">참석 {validRegularAttendees.length}명</span>
                                                                     </div>
-                                                                    <div className="text-[10px] text-gray-500 mt-1 flex flex-wrap gap-1">
+                                                                    <div className="text-[10px] text-gray-500 mt-1.5 flex flex-wrap gap-1">
                                                                         {validRegularAttendees.map(name => (
-                                                                            <span key={name} className="bg-white px-1.5 py-0.5 rounded text-gray-600 border border-gray-100">{name}</span>
+                                                                            <span key={name} className="bg-white px-1.5 py-0.5 rounded text-gray-600 border border-gray-100 shadow-xs">{name}</span>
                                                                         ))}
                                                                     </div>
                                                                 </div>
@@ -1635,7 +1666,6 @@
                                 </div>
                             )}
 
-                            {}
                             {/* 3. 회비 납부 현황 탭 */}
                             {mainTab === 'fee' && (
                                 <div className="animate-in fade-in duration-300 max-w-4xl mx-auto text-left space-y-6">
@@ -1671,7 +1701,8 @@
                                         <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-between">
                                             <div className="min-h-[20px] flex items-center justify-between">
                                                 <span className="text-[10px] font-black text-amber-600 uppercase tracking-wider">일회비</span>
-                                                {feeSummary.singleCount > 0 && (
+                                                {/* 일회비 회원들이 실제로 1회 이상 출석하여 발생액이 있을 때만 미납/완납 표시 */}
+                                                {feeSummary.singleCount > 0 && feeSummary.singleTotalAttendances > 0 && (
                                                     <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-md ${
                                                         (feeSummary.singleCount - feeSummary.singlePaidCount) > 0 
                                                             ? 'text-rose-600 bg-rose-50 border border-rose-200' 
@@ -1724,7 +1755,7 @@
                                                         }} 
                                                         className="text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200 hover:bg-emerald-100 transition-colors cursor-pointer font-black text-[10px] flex items-center gap-1"
                                                     >
-                                                        ⚙️ 회비 기준 금액 변경
+                                                        ⚙️️ 회비 기준 금액 변경
                                                     </button>
                                                 </div>
                                             )}
@@ -1755,10 +1786,10 @@
                                                 const finalSingleFee = hasDiscount ? Math.max(0, rawSingleFee - RESERVED_DISCOUNT_AMOUNT) : rawSingleFee;
 
                                                 return (
-                                                    <div key={member.id} className="p-2 sm:p-3 flex items-center justify-between hover:bg-gray-50/40 transition-colors gap-1.5">
+                                                    <div key={member.id} className="p-2 sm:p-2.5 flex items-center justify-between hover:bg-gray-50/50 transition-all gap-1.5">
                                                         {/* 좌측: 성별, 이름, 주요 배지 (한 줄 유지) */}
-                                                        <div className="flex items-center gap-1.5 sm:gap-2 min-w-0">
-                                                            <span className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full flex items-center justify-center text-[7px] sm:text-[8px] font-black shadow-xs shrink-0 ${member.gender === '남' ? 'bg-blue-50 text-blue-500' : 'bg-orange-100 text-orange-600'}`}>{member.gender}</span>
+                                                        <div className="flex items-center gap-1.5 sm:gap-2.5 min-w-0">
+                                                            <span className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center font-black text-[10px] sm:text-[11px] shadow-sm shrink-0 ${member.gender === '남' ? 'bg-blue-100 text-blue-600' : 'bg-orange-100 text-orange-600'}`}>{member.gender}</span>
                                                             <div className="flex items-center gap-1 sm:gap-1.5 truncate">
                                                                 {isAdmin ? (
                                                                     <button 
@@ -1766,13 +1797,13 @@
                                                                         className="flex items-center gap-1 hover:text-green-600 transition-colors group cursor-pointer text-left shrink-0"
                                                                         title="최근 6개월 회비 납부 이력 보기"
                                                                     >
-                                                                        <span className="font-bold text-xs text-gray-800 group-hover:text-green-600 underline-offset-2 group-hover:underline truncate max-w-[55px] sm:max-w-none">{member.name}</span>
+                                                                        <span className="font-bold text-xs sm:text-sm text-gray-800 group-hover:text-green-600 underline-offset-2 group-hover:underline truncate max-w-[60px] sm:max-w-none">{member.name}</span>
                                                                         <span className="text-[8px] font-bold text-gray-400 bg-gray-100 group-hover:bg-green-50 group-hover:text-green-600 px-1 py-0.2 rounded transition-colors shrink-0">
                                                                             📊
                                                                         </span>
                                                                     </button>
                                                                 ) : (
-                                                                    <span className="font-bold text-xs text-gray-800 truncate max-w-[65px] sm:max-w-none">{member.name}</span>
+                                                                    <span className="font-bold text-xs sm:text-sm text-gray-800 truncate max-w-[70px] sm:max-w-none">{member.name}</span>
                                                                 )}
                                                                 
                                                                 {/* 구장예약 한 사람 배지 */}
@@ -1782,31 +1813,37 @@
                                                                     </span>
                                                                 )}
 
-                                                                {/* 💡 일회비 대상자 배지 */}
+                                                                {/* 💡 일회비 대상자 배지: 0회 출석이면 미참석(회색), 1회 이상일 때만 횟수 및 완납/미납 표시 */}
                                                                 {status === 'single' && (
-                                                                    <span className={`text-[8px] font-black px-1.5 py-0.2 rounded shrink-0 border ${
-                                                                        isSinglePaid 
-                                                                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
-                                                                            : 'bg-amber-50 text-amber-800 border-amber-200'
-                                                                    }`}>
-                                                                        {monthAttends}회{isSinglePaid ? '·완' : '·미'}
-                                                                    </span>
+                                                                    monthAttends === 0 ? (
+                                                                        <span className="text-[8px] font-bold px-1.5 py-0.2 rounded shrink-0 border bg-gray-100 text-gray-500 border-gray-200" title="해당 월 정기 매치 미참석 (회비 0원)">
+                                                                            미참석
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span className={`text-[8px] font-black px-1.5 py-0.2 rounded shrink-0 border ${
+                                                                            isSinglePaid 
+                                                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
+                                                                                : 'bg-amber-50 text-amber-800 border-amber-200'
+                                                                        }`}>
+                                                                            {monthAttends}회{isSinglePaid ? '·완' : '·미'}
+                                                                        </span>
+                                                                    )
                                                                 )}
                                                             </div>
                                                         </div>
                                                         
-                                                        {/* 우측: 4단계 상태 토글 버튼 그룹 및 관리자 보조 버튼 (한 줄 유지) */}
-                                                        <div className="flex items-center gap-1 shrink-0">
-                                                            {/* 💡 일회비 입금 확인 토글 버튼 (관리자 전용) */}
-                                                            {isAdmin && status === 'single' && (
+                                                        {/* 우측: 참석/불참/보류 스타일의 상태 선택 버튼 그룹 */}
+                                                        <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
+                                                            {/* 💡 일회비 입금 확인 토글 버튼: 1회 이상 출석하여 납부할 금액이 있는 경우에만 표시! */}
+                                                            {isAdmin && status === 'single' && monthAttends > 0 && (
                                                                 <button
                                                                     onClick={() => toggleSinglePaidStatus(member.name)}
-                                                                    className={`px-1.5 py-0.5 sm:px-2 sm:py-1 rounded-lg text-[8px] sm:text-[9px] font-black transition-all border shadow-xs ${
+                                                                    className={`px-1.5 py-1 sm:px-2 sm:py-1.5 rounded-lg text-[9px] font-black transition-all border shadow-xs ${
                                                                         isSinglePaid 
                                                                             ? 'bg-emerald-600 text-white border-emerald-600' 
                                                                             : 'bg-amber-50 text-amber-700 border-amber-300'
                                                                     }`}
-                                                                    title="일회비 계좌 입금 확인 토글"
+                                                                    title={`일회비 ${finalSingleFee.toLocaleString()}원 입금 확인 토글`}
                                                                 >
                                                                     <span>{isSinglePaid ? '✅' : '💸'}</span>
                                                                 </button>
@@ -1816,7 +1853,7 @@
                                                             {isAdmin && (
                                                                 <button
                                                                     onClick={() => toggleReservedDiscount(member.name)}
-                                                                    className={`px-1.5 py-0.5 sm:px-2 sm:py-1 rounded-lg text-[8px] sm:text-[9px] font-black transition-all border shadow-xs ${
+                                                                    className={`px-1.5 py-1 sm:px-2 sm:py-1.5 rounded-lg text-[9px] font-black transition-all border shadow-xs ${
                                                                         hasDiscount 
                                                                             ? 'bg-purple-600 text-white border-purple-600' 
                                                                             : 'bg-white text-gray-400 border-gray-200'
@@ -1827,46 +1864,47 @@
                                                                 </button>
                                                             )}
 
-                                                            <div className="flex bg-gray-100/90 p-0.5 rounded-xl border border-gray-200/60 shadow-inner">
+                                                            {/* 참석/불참/보류와 동일한 그레이 트레이 세그먼트 버튼 */}
+                                                            <div className="flex bg-gray-100 p-0.5 rounded-xl border border-gray-100 shadow-inner shrink-0">
                                                                 <button 
                                                                     onClick={() => setMemberFeeStatus(member.name, 'paid')} 
-                                                                    className={`px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-black transition-all flex items-center gap-0.5 ${
+                                                                    className={`status-btn px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[9px] sm:text-[10px] font-black ${
                                                                         status === 'paid' 
-                                                                            ? 'bg-emerald-500 text-white shadow-xs' 
+                                                                            ? 'bg-green-500 text-white shadow-md' 
                                                                             : 'text-gray-400 hover:text-gray-600'
                                                                     }`}
                                                                 >
-                                                                    <span className="text-[7px] hidden sm:inline">●</span><span>완료</span>
+                                                                    완료
                                                                 </button>
                                                                 <button 
                                                                     onClick={() => setMemberFeeStatus(member.name, 'single')} 
-                                                                    className={`px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-black transition-all flex items-center gap-0.5 ${
+                                                                    className={`status-btn px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[9px] sm:text-[10px] font-black ${
                                                                         status === 'single' 
-                                                                            ? 'bg-amber-500 text-white shadow-xs' 
+                                                                            ? 'bg-amber-500 text-white shadow-md' 
                                                                             : 'text-gray-400 hover:text-gray-600'
                                                                     }`}
                                                                 >
-                                                                    <span className="text-[7px] hidden sm:inline">●</span><span>일회비</span>
+                                                                    일회비
                                                                 </button>
                                                                 <button 
                                                                     onClick={() => setMemberFeeStatus(member.name, 'break')} 
-                                                                    className={`px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-black transition-all flex items-center gap-0.5 ${
+                                                                    className={`status-btn px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[9px] sm:text-[10px] font-black ${
                                                                         status === 'break' 
-                                                                            ? 'bg-slate-600 text-white shadow-xs' 
+                                                                            ? 'bg-slate-500 text-white shadow-md' 
                                                                             : 'text-gray-400 hover:text-gray-600'
                                                                     }`}
                                                                 >
-                                                                    <span className="text-[7px] hidden sm:inline">●</span><span>부상</span>
+                                                                    부상
                                                                 </button>
                                                                 <button 
                                                                     onClick={() => setMemberFeeStatus(member.name, 'unpaid')} 
-                                                                    className={`px-1.5 sm:px-2.5 py-0.5 sm:py-1 rounded-lg text-[9px] sm:text-[10px] font-black transition-all flex items-center gap-0.5 ${
+                                                                    className={`status-btn px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[9px] sm:text-[10px] font-black ${
                                                                         status === 'unpaid' 
-                                                                        ? 'bg-rose-500 text-white shadow-xs' 
-                                                                        : 'text-gray-400 hover:text-gray-600'
+                                                                            ? 'bg-red-400 text-white shadow-md' 
+                                                                            : 'text-gray-400 hover:text-gray-600'
                                                                     }`}
                                                                 >
-                                                                    <span className="text-[7px] hidden sm:inline">●</span><span>미납</span>
+                                                                    미납
                                                                 </button>
                                                             </div>
                                                         </div>
@@ -1878,7 +1916,6 @@
                                 </div>
                             )}
 
-                            {}
                             {/* 4. 멤버 DB 관리 탭 */}
                             {mainTab === 'manage' && (
                                 !isAdmin ? (
@@ -2011,7 +2048,7 @@
                             className={`flex flex-col items-center justify-center flex-1 py-1 rounded-xl transition-all ${activeTab === 'vote' ? 'text-green-600 font-black' : 'text-gray-400 font-bold'}`}
                         >
                             <span className="text-lg">🏃</span>
-                            <span className="text-[10px] mt-0.5 tracking-tight">투표 ({attendingCount})</span>
+                            <span className="text-[10px] mt-0.5 tracking-tight">투표</span>
                         </button>
                         <button 
                             onClick={() => handleTabSwitch('match')}
