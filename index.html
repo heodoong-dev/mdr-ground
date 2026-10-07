@@ -140,6 +140,9 @@
             // 'month' | '3months' | '6months' | 'custom'
             const [rankPeriod, setRankPeriod] = useState('3months'); 
             
+            // 💡 출석 순위에서 멤버 클릭 시 매치 히스토리에서 강조 표시할 멤버명
+            const [highlightedMember, setHighlightedMember] = useState(null);
+
             // 기간조회용 시작월 / 종료월 상태 (기본 3개월 전 ~ 이번 달)
             const getPastYearMonth = (monthsAgo) => {
                 const d = new Date();
@@ -1537,46 +1540,66 @@
                                     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                                         <div className="p-4 bg-gray-50/60 border-b border-gray-100 flex items-center justify-between">
                                             <h3 className="text-xs font-black text-gray-700">
-                                                정기멤버 출석 순위 <span className="text-green-600 font-bold ml-1">({regularMemberList.length}명 전원 집계)</span>
+                                                정기멤버 출석 순위
                                             </h3>
                                             <span className="text-[10px] text-gray-400 font-bold">
-                                                총 {attendanceStats.totalMatches}경기 기준 {excludeIrregular && '(정기 전용)'} (동률 시 공동 순위)
+                                                총 {attendanceStats.totalMatches}경기 기준 {excludeIrregular && '(정기 전용)'}
                                             </span>
                                         </div>
                                         <div className="divide-y divide-gray-50">
-                                            {attendanceStats.list.map((item) => (
-                                                <div key={item.name} className="p-3.5 flex items-center justify-between hover:bg-gray-50/50 transition-colors">
-                                                    <div className="flex items-center gap-3">
-                                                        <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-black ${item.rank === 1 ? 'bg-yellow-400 text-white shadow-sm' : item.rank === 2 ? 'bg-slate-300 text-white' : item.rank === 3 ? 'bg-amber-500 text-white' : 'text-gray-400'}`}>
-                                                            {item.rank}
-                                                        </span>
-                                                        <span className={`text-[8px] font-black w-4 h-4 flex items-center justify-center rounded-full ${item.gender === '남' ? 'bg-blue-50 text-blue-500' : 'bg-orange-100 text-orange-600'}`}>{item.gender}</span>
-                                                        <div>
-                                                            <span className="font-bold text-xs text-gray-800">{item.name}</span>
-                                                            {item.rank === 1 && item.count > 0 && (
-                                                                <span className="ml-1.5 text-[9px] bg-yellow-100 text-yellow-800 font-black px-1.5 py-0.5 rounded-full">
-                                                                    🥇 {attendanceStats.rankGroups[1]?.length > 1 ? '공동 출석왕' : '출석왕'}
+                                            {attendanceStats.list.map((item) => {
+                                                const isHighlighted = highlightedMember === item.name;
+                                                return (
+                                                    <div 
+                                                        key={item.name} 
+                                                        onClick={() => {
+                                                            const next = isHighlighted ? null : item.name;
+                                                            setHighlightedMember(next);
+                                                            if (next && !isHistoryExpanded) {
+                                                                setIsHistoryExpanded(true);
+                                                            }
+                                                        }}
+                                                        className={`p-3.5 flex items-center justify-between cursor-pointer transition-all ${
+                                                            isHighlighted 
+                                                                ? 'bg-amber-50/70 border-l-4 border-l-amber-400' 
+                                                                : 'hover:bg-gray-50/60'
+                                                        }`}
+                                                        title={`${item.name} 클릭 시 아래 매치 히스토리에서 출석 내역 강조`}
+                                                    >
+                                                        <div className="flex items-center gap-3">
+                                                            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-black ${item.rank === 1 ? 'bg-yellow-400 text-white shadow-sm' : item.rank === 2 ? 'bg-slate-300 text-white' : item.rank === 3 ? 'bg-amber-500 text-white' : 'text-gray-400'}`}>
+                                                                {item.rank}
+                                                            </span>
+                                                            <span className={`text-[8px] font-black w-4 h-4 flex items-center justify-center rounded-full ${item.gender === '남' ? 'bg-blue-50 text-blue-500' : 'bg-orange-100 text-orange-600'}`}>{item.gender}</span>
+                                                            <div>
+                                                                <span className={`font-bold text-xs ${isHighlighted ? 'text-amber-900 font-black' : 'text-gray-800'}`}>
+                                                                    {item.name}
                                                                 </span>
-                                                            )}
-                                                            {item.rank === 2 && attendanceStats.rankGroups[2]?.length > 1 && (
-                                                                <span className="ml-1.5 text-[9px] bg-slate-100 text-slate-700 font-bold px-1.5 py-0.5 rounded-full">
-                                                                    🥈 공동 2위
-                                                                </span>
-                                                            )}
+                                                                {item.rank === 1 && item.count > 0 && (
+                                                                    <span className="ml-1.5 text-[9px] bg-yellow-100 text-yellow-800 font-black px-1.5 py-0.5 rounded-full">
+                                                                        🥇 {attendanceStats.rankGroups[1]?.length > 1 ? '공동 출석왕' : '출석왕'}
+                                                                    </span>
+                                                                )}
+                                                                {item.rank === 2 && attendanceStats.rankGroups[2]?.length > 1 && (
+                                                                    <span className="ml-1.5 text-[9px] bg-slate-100 text-slate-700 font-bold px-1.5 py-0.5 rounded-full">
+                                                                        🥈 공동 2위
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                        <div className="flex items-center gap-4">
+                                                            {/* 출석률 프로그레스 바 */}
+                                                            <div className="w-24 hidden sm:block bg-gray-100 h-2 rounded-full overflow-hidden">
+                                                                <div className={`${isHighlighted ? 'bg-amber-400' : 'bg-green-500'} h-full rounded-full transition-all duration-500`} style={{ width: `${item.rate}%` }}></div>
+                                                            </div>
+                                                            <div className="text-right">
+                                                                <span className={`text-xs font-black ${isHighlighted ? 'text-amber-800 font-black' : 'text-gray-800'}`}>{item.count}회</span>
+                                                                <span className="text-[10px] text-gray-400 ml-1.5 font-bold">({item.rate}%)</span>
+                                                            </div>
                                                         </div>
                                                     </div>
-                                                    <div className="flex items-center gap-4">
-                                                        {/* 출석률 프로그레스 바 */}
-                                                        <div className="w-24 hidden sm:block bg-gray-100 h-2 rounded-full overflow-hidden">
-                                                            <div className="bg-green-500 h-full rounded-full transition-all duration-500" style={{ width: `${item.rate}%` }}></div>
-                                                        </div>
-                                                        <div className="text-right">
-                                                            <span className="text-xs font-black text-gray-800">{item.count}회</span>
-                                                            <span className="text-[10px] text-gray-400 ml-1.5 font-bold">({item.rate}%)</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            ))}
+                                                );
+                                            })}
                                         </div>
                                     </div>
 
@@ -1651,9 +1674,21 @@
                                                                         <span className="text-[10px] text-green-600 font-black">참석 {validRegularAttendees.length}명</span>
                                                                     </div>
                                                                     <div className="text-[10px] text-gray-500 mt-1.5 flex flex-wrap gap-1">
-                                                                        {validRegularAttendees.map(name => (
-                                                                            <span key={name} className="bg-white px-1.5 py-0.5 rounded text-gray-600 border border-gray-100 shadow-xs">{name}</span>
-                                                                        ))}
+                                                                        {validRegularAttendees.map(name => {
+                                                                            const isSelected = highlightedMember === name;
+                                                                            return (
+                                                                                <span 
+                                                                                    key={name} 
+                                                                                    className={`transition-colors duration-150 px-1.5 py-0.5 rounded text-[10px] ${
+                                                                                        isSelected 
+                                                                                            ? 'bg-amber-100 text-amber-900 font-black border border-amber-300' 
+                                                                                            : 'bg-white text-gray-600 border border-gray-100 shadow-xs'
+                                                                                    }`}
+                                                                                >
+                                                                                    {name}
+                                                                                </span>
+                                                                            );
+                                                                        })}
                                                                     </div>
                                                                 </div>
                                                                 {isAdmin && (
@@ -1685,8 +1720,17 @@
                                         <div className="flex flex-wrap items-center gap-2">
                                             <input 
                                                 type="month" 
+                                                min="2026-10"
                                                 value={selectedMonth} 
-                                                onChange={e => setSelectedMonth(e.target.value)} 
+                                                onChange={e => {
+                                                    const val = e.target.value;
+                                                    if (val && val < '2026-10') {
+                                                        setSelectedMonth('2026-10');
+                                                        notify("회비는 2026년 10월부터 조회 및 관리가 가능합니다.");
+                                                    } else {
+                                                        setSelectedMonth(val);
+                                                    }
+                                                }} 
                                                 className="bg-white border border-gray-200 rounded-xl px-3 py-2 text-xs font-black text-gray-700 outline-none focus:border-green-500 shadow-sm cursor-pointer"
                                             />
                                             {isAdmin && (
