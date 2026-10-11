@@ -96,17 +96,37 @@
             const isAdminRef = useRef(false);
             const [isMatching, setIsMatching] = useState(false);
 
-            // 🐖 [옵션 A: 귀여운 짧은 인사 스플래시] 접속 시 0.8초 동안 귀여운 돼지가 공을 차며 반갑게 맞이함
-            const [isLoading, setIsLoading] = useState(true);
-            const isDataLoadedRef = useRef(false);
+            // 🐖 [스마트 스플래시 동기화]
+            // 최소 0.8초 동안 귀여운 돼지를 감상하되, 데이터가 아직 도착하지 않았으면 빈 화면을 보여주지 않고 돼지가 계속 공을 차며 대기!
+            const [minTimeDone, setMinTimeDone] = useState(false);
+            const [dataReady, setDataReady] = useState(() => {
+                try {
+                    const saved = localStorage.getItem('mdr_cached_members');
+                    return !!(saved && JSON.parse(saved).length > 0);
+                } catch (e) {
+                    return false;
+                }
+            });
 
+            // 1) 0.8초 최소 인사 타임 보장
             useEffect(() => {
-                // 접속 시 딱 800ms(0.8초) 동안 귀여운 돼지 애니메이션을 기분 좋게 감상 후 메인으로 쏙 전환
                 const timer = setTimeout(() => {
-                    setIsLoading(false);
+                    setMinTimeDone(true);
                 }, 800);
                 return () => clearTimeout(timer);
             }, []);
+
+            // 2) 네트워크가 너무 느릴 때를 대비한 최대 3.5초 강제 입장 안전장치
+            useEffect(() => {
+                const safetyTimer = setTimeout(() => {
+                    setDataReady(true);
+                }, 3500);
+                return () => clearTimeout(safetyTimer);
+            }, []);
+
+            // 최소 시간(0.8초)과 데이터 준비가 둘 다 완료되어야 메인 화면 오픈!
+            const isLoading = !(minTimeDone && dataReady);
+
             const [newMember, setNewMember] = useState({ name: '', gender: '남', level: 3 });
             
             const [filterMode, setFilterMode] = useState('all');
@@ -256,7 +276,7 @@
             const fetchMembers = () => {
                 if (!SHEET_API_URL) {
                     setMembers([]);
-                    setIsLoading(false);
+                    setDataReady(true);
                     return;
                 }
                 fetch(SHEET_API_URL)
@@ -293,7 +313,7 @@
                         const validMembers = memberArray.filter(m => m && m.name && String(m.name).trim() !== '');
                         if (validMembers.length === 0) {
                             setMembers([]);
-                            setIsLoading(false);
+                            setDataReady(true);
                             return;
                         }
                         const formattedData = validMembers.map(m => {
@@ -311,6 +331,7 @@
                             return { ...m, gender: genderValue, level: levelValue, isAttending: attendanceStatus };
                         });
                         setMembers(formattedData);
+                        setDataReady(true);
                         // ⚡ 최신 받아온 멤버 목록을 로컬 캐시에 즉시 백업 저장
                         try {
                             localStorage.setItem('mdr_cached_members', JSON.stringify(formattedData));
@@ -318,6 +339,7 @@
                     })
                     .catch(() => {
                         // 에러 발생 시에도 캐시 명단으로 정상 작동
+                        setDataReady(true);
                     });
             };
 
@@ -1837,9 +1859,11 @@
                                     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                                         <div className="p-4 bg-gray-50/60 border-b border-gray-100 flex items-center justify-between">
                                             <h3 className="text-xs font-black text-gray-700">멤버별 회비 납부 상태</h3>
-                                            <span className="text-[10px] text-gray-400 font-bold">
-                                                {isAdmin ? "배지를 클릭하여 상태 및 구장예약을 관리하세요" : "🔒 관리자만 상태를 변경할 수 있습니다"}
-                                            </span>
+                                            {!isAdmin && (
+                                                <span className="text-[10px] text-gray-400 font-bold">
+                                                    🔒 관리자만 상태를 변경할 수 있습니다
+                                                </span>
+                                            )}
                                         </div>
                                         <div className="divide-y divide-gray-50">
                                             {regularMemberList.map(member => {
