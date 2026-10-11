@@ -77,7 +77,15 @@
         };
 
         function App() {
-            const [members, setMembers] = useState([]); 
+            // ⚡ [선(先)렌더링] 캐시된 멤버 데이터가 있으면 즉시 복원 준비
+            const [members, setMembers] = useState(() => {
+                try {
+                    const saved = localStorage.getItem('mdr_cached_members');
+                    return saved ? JSON.parse(saved) : [];
+                } catch (e) {
+                    return [];
+                }
+            }); 
             const [matchedTeams, setMatchedTeams] = useState(null);
             const [teamCount, setTeamCount] = useState(2);
             
@@ -87,7 +95,18 @@
             const [isAdmin, setIsAdmin] = useState(false); 
             const isAdminRef = useRef(false);
             const [isMatching, setIsMatching] = useState(false);
+
+            // 🐖 [옵션 A: 귀여운 짧은 인사 스플래시] 접속 시 0.8초 동안 귀여운 돼지가 공을 차며 반갑게 맞이함
             const [isLoading, setIsLoading] = useState(true);
+            const isDataLoadedRef = useRef(false);
+
+            useEffect(() => {
+                // 접속 시 딱 800ms(0.8초) 동안 귀여운 돼지 애니메이션을 기분 좋게 감상 후 메인으로 쏙 전환
+                const timer = setTimeout(() => {
+                    setIsLoading(false);
+                }, 800);
+                return () => clearTimeout(timer);
+            }, []);
             const [newMember, setNewMember] = useState({ name: '', gender: '남', level: 3 });
             
             const [filterMode, setFilterMode] = useState('all');
@@ -292,12 +311,13 @@
                             return { ...m, gender: genderValue, level: levelValue, isAttending: attendanceStatus };
                         });
                         setMembers(formattedData);
-                        setIsLoading(false); 
+                        // ⚡ 최신 받아온 멤버 목록을 로컬 캐시에 즉시 백업 저장
+                        try {
+                            localStorage.setItem('mdr_cached_members', JSON.stringify(formattedData));
+                        } catch (e) {}
                     })
                     .catch(() => {
-                        setMembers([]);
-                        notify("네트워크 연결 또는 시트 데이터를 확인해주세요.");
-                        setIsLoading(false);
+                        // 에러 발생 시에도 캐시 명단으로 정상 작동
                     });
             };
 
