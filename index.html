@@ -76,12 +76,46 @@
             );
         };
 
+        // 💡 [주간 세션 키 계산기] 한국 표준시(KST) 기준 월요일 23:00(또는 화요일 00:00) 정기 리셋 반영
+        // 이번 주차가 시작된 기준 날짜 문자열(YYYY-MM-DD)을 생성하여 지난주 캐시의 잔상 깜빡임을 원천 차단!
+        const getCurrentWeekCycleKey = () => {
+            const now = new Date();
+            const kstOffset = 9 * 60;
+            const kstDate = new Date(now.getTime() + (now.getTimezoneOffset() + kstOffset) * 60000);
+            
+            // 일요일(0), 월요일(1), 화요일(2)...
+            // 월요일 23시 이후거나 화요일부터는 새로운 주차 사이클 시작
+            const day = kstDate.getDay();
+            const hours = kstDate.getHours();
+            
+            // 지난 가장 최근의 "화요일 00:00" 기준일을 사이클 시작점으로 잡음
+            const diffDays = (day === 1 && hours >= 23) ? 0 : (day >= 2 ? day - 2 : day + 5);
+            const cycleStart = new Date(kstDate);
+            cycleStart.setDate(kstDate.getDate() - diffDays);
+            
+            const y = cycleStart.getFullYear();
+            const m = String(cycleStart.getMonth() + 1).padStart(2, '0');
+            const d = String(cycleStart.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+        };
+
         function App() {
-            // ⚡ [선(先)렌더링] 캐시된 멤버 데이터가 있으면 즉시 복원 준비
+            // ⚡ [선(先)렌더링 + 주간 캐시 검증]
+            // 지난 주차의 옛날 투표 데이터라면 명단(이름/성별/레벨)만 살리고 투표 상태(isAttending)는 깨끗이 비운 채 시작!
             const [members, setMembers] = useState(() => {
                 try {
                     const saved = localStorage.getItem('mdr_cached_members');
-                    return saved ? JSON.parse(saved) : [];
+                    const savedCycle = localStorage.getItem('mdr_cached_cycle_key');
+                    const currentCycle = getCurrentWeekCycleKey();
+
+                    if (!saved) return [];
+                    const parsed = JSON.parse(saved);
+
+                    // 주차가 바뀌었으면(새로운 화요일 첫 접속) 참석 투표 상태를 null(미투표)로 리셋하여 옛날 잔상 방지
+                    if (savedCycle !== currentCycle) {
+                        return parsed.map(m => ({ ...m, isAttending: null }));
+                    }
+                    return parsed;
                 } catch (e) {
                     return [];
                 }
@@ -332,9 +366,10 @@
                         });
                         setMembers(formattedData);
                         setDataReady(true);
-                        // ⚡ 최신 받아온 멤버 목록을 로컬 캐시에 즉시 백업 저장
+                        // ⚡ 최신 받아온 멤버 목록 및 현재 주차 사이클 키를 로컬 캐시에 즉시 백업 저장
                         try {
                             localStorage.setItem('mdr_cached_members', JSON.stringify(formattedData));
+                            localStorage.setItem('mdr_cached_cycle_key', getCurrentWeekCycleKey());
                         } catch (e) {}
                     })
                     .catch(() => {
