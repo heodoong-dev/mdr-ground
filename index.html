@@ -131,16 +131,11 @@
             const [isMatching, setIsMatching] = useState(false);
 
             // 🐖 [스마트 스플래시 동기화]
-            // 최소 0.8초 동안 귀여운 돼지를 감상하되, 데이터가 아직 도착하지 않았으면 빈 화면을 보여주지 않고 돼지가 계속 공을 차며 대기!
+            // 최소 0.8초 동안 귀여운 돼지를 감상하되,
+            // 구글 시트의 "진짜 최신 데이터"가 도착하기 전까지는 이전 캐시 숫자로 화면을 열지 않고
+            // 돼지가 공을 차며 대기하여 '15명 → 18명' 깜빡임 현상을 원천 방지합니다!
             const [minTimeDone, setMinTimeDone] = useState(false);
-            const [dataReady, setDataReady] = useState(() => {
-                try {
-                    const saved = localStorage.getItem('mdr_cached_members');
-                    return !!(saved && JSON.parse(saved).length > 0);
-                } catch (e) {
-                    return false;
-                }
-            });
+            const [dataReady, setDataReady] = useState(false);
 
             // 1) 0.8초 최소 인사 타임 보장
             useEffect(() => {
@@ -150,7 +145,7 @@
                 return () => clearTimeout(timer);
             }, []);
 
-            // 2) 네트워크가 너무 느릴 때를 대비한 최대 3.5초 강제 입장 안전장치
+            // 2) 네트워크 지연 대비 최대 3.5초 강제 입장 안전장치 (오프라인이어도 캐시로 입장)
             useEffect(() => {
                 const safetyTimer = setTimeout(() => {
                     setDataReady(true);
@@ -158,7 +153,7 @@
                 return () => clearTimeout(safetyTimer);
             }, []);
 
-            // 최소 시간(0.8초)과 데이터 준비가 둘 다 완료되어야 메인 화면 오픈!
+            // 최소 시간(0.8초)과 "최신 데이터 도착"이 둘 다 완료되어야 메인 화면 오픈!
             const isLoading = !(minTimeDone && dataReady);
 
             const [newMember, setNewMember] = useState({ name: '', gender: '남', level: 3 });
@@ -993,25 +988,63 @@
                         return Math.max(...avgs) - Math.min(...avgs);
                     };
 
+                    // 💡 분리 배정 필수 대상자 정의
+                    // 2파전: 송주은, 남재훈 분리
+                    // 3파전 이상: 송주은, 남재훈, 송도영 분리
+                    const separatedNames = teamCount === 2 
+                        ? ['송주은', '남재훈'] 
+                        : ['송주은', '남재훈', '송도영'];
+
+                    // 특정 팀에 분리 대상자가 2명 이상 들어갔는지 검사하는 헬퍼
+                    const hasSeparationConflict = (teamsArray) => {
+                        for (let t = 0; t < teamsArray.length; t++) {
+                            const count = teamsArray[t].players.filter(p => separatedNames.includes(p.name)).length;
+                            if (count > 1) return true;
+                        }
+                        return false;
+                    };
+
                     let bestTeams = null;
                     let bestCost = Infinity;
 
-                    for (let attempt = 0; attempt < 30; attempt++) {
+                    for (let attempt = 0; attempt < 40; attempt++) {
                         let currentTeams = Array.from({ length: teamCount }, (_, i) => ({
                             id: i, name: `${String.fromCharCode(65 + i)}팀`, players: []
                         }));
 
-                        const shuffledFemales = [...females].sort(() => Math.random() - 0.5);
-                        const shuffledMales = [...males].sort(() => Math.random() - 0.5);
+                        // 참석자 중 분리 대상자와 일반 플레이어 분리
+                        const attendingSeparated = attendees.filter(p => separatedNames.includes(p.name));
+                        const remainingFemales = females.filter(p => !separatedNames.includes(p.name));
+                        const remainingMales = males.filter(p => !separatedNames.includes(p.name));
+
+                        // 1) 분리 대상자들을 서로 다른 팀에 먼저 1명씩 무작위 슬롯 배치
+                        const shuffledSeparated = [...attendingSeparated].sort(() => Math.random() - 0.5);
+                        const assignedTeamIndices = [];
+                        shuffledSeparated.forEach((player, sIdx) => {
+                            const tIdx = sIdx % teamCount;
+                            currentTeams[tIdx].players.push(player);
+                            assignedTeamIndices.push(tIdx);
+                        });
+
+                        // 2) 나머지 인원 셔플 후 라운드로빈 배분
+                        const shuffledFemales = [...remainingFemales].sort(() => Math.random() - 0.5);
+                        const shuffledMales = [...remainingMales].sort(() => Math.random() - 0.5);
 
                         let teamIdx = 0;
-                        shuffledFemales.forEach(p => { currentTeams[teamIdx].players.push(p); teamIdx = (teamIdx + 1) % teamCount; });
-                        shuffledMales.forEach(p => { currentTeams[teamIdx].players.push(p); teamIdx = (teamIdx + 1) % teamCount; });
+                        shuffledFemales.forEach(p => { 
+                            currentTeams[teamIdx].players.push(p); 
+                            teamIdx = (teamIdx + 1) % teamCount; 
+                        });
+                        shuffledMales.forEach(p => { 
+                            currentTeams[teamIdx].players.push(p); 
+                            teamIdx = (teamIdx + 1) % teamCount; 
+                        });
 
                         let currentCost = getCost(currentTeams);
 
-                        for (let i = 0; i < 2000; i++) {
-                            if (currentCost === 0) break;
+                        // 3) 최적 밸런싱 스왑 반복문 (분리 대상자가 한 팀으로 뭉치지 않도록 방어)
+                        for (let i = 0; i < 2500; i++) {
+                            if (currentCost === 0 && !hasSeparationConflict(currentTeams)) break;
 
                             const t1Idx = Math.floor(Math.random() * teamCount);
                             let t2Idx = Math.floor(Math.random() * teamCount);
@@ -1037,6 +1070,21 @@
                             const p2Idx = p2Item.idx;
                             const p2 = p2Item.p;
 
+                            // 🚨 스왑 시 두 분리 대상자가 한 팀으로 뭉치게 되는 스왑이면 취소
+                            const p1IsSep = separatedNames.includes(p1.name);
+                            const p2IsSep = separatedNames.includes(p2.name);
+
+                            // 둘 다 분리 대상자면 맞바꾸는 것이므로 각 팀 내 인원수는 유지되어 안전
+                            // 하지만 한 명만 분리 대상자라면 이동 대상 팀에 이미 다른 분리 대상자가 있는지 체크
+                            if (p1IsSep && !p2IsSep) {
+                                const t2HasOtherSep = t2.players.some(p => p.id !== p2.id && separatedNames.includes(p.name));
+                                if (t2HasOtherSep) continue;
+                            } else if (!p1IsSep && p2IsSep) {
+                                const t1HasOtherSep = t1.players.some(p => p.id !== p1.id && separatedNames.includes(p.name));
+                                if (t1HasOtherSep) continue;
+                            }
+
+                            // 선수 맞교환
                             t1.players[p1Idx] = p2;
                             t2.players[p2Idx] = p1;
 
@@ -1044,18 +1092,28 @@
 
                             if (newCost < currentCost) {
                                 currentCost = newCost;
-                            } else if (newCost === currentCost && Math.random() < 0.3) {
+                            } else if (newCost === currentCost && Math.random() < 0.25) {
+                                // 같은 비용 허용
                             } else {
+                                // 원복
                                 t1.players[p1Idx] = p1;
                                 t2.players[p2Idx] = p2;
                             }
                         }
 
-                        if (currentCost < bestCost) {
-                            bestCost = currentCost;
-                            bestTeams = currentTeams.map(t => ({ ...t, players: [...t.players] }));
+                        // 분리 규칙 위반이 없고 레벨 차이가 최소인 조합 선택
+                        if (!hasSeparationConflict(currentTeams)) {
+                            if (currentCost < bestCost) {
+                                bestCost = currentCost;
+                                bestTeams = currentTeams.map(t => ({ ...t, players: [...t.players] }));
+                            }
+                            if (bestCost === 0) break;
                         }
-                        if (bestCost === 0) break;
+                    }
+
+                    // 안전장치: 혹시 극단적 조건으로 분리 해를 못 찾았을 경우 대비
+                    if (!bestTeams) {
+                        bestTeams = currentTeams;
                     }
 
                     bestTeams.forEach(team => {
@@ -1797,13 +1855,13 @@
                                         <div className="flex flex-wrap items-center gap-2">
                                             <input 
                                                 type="month" 
-                                                min="2026-10"
+                                                min="2026-06"
                                                 value={selectedMonth} 
                                                 onChange={e => {
                                                     const val = e.target.value;
-                                                    if (val && val < '2026-10') {
-                                                        setSelectedMonth('2026-10');
-                                                        notify("회비는 2026년 10월부터 조회 및 관리가 가능합니다.");
+                                                    if (val && val < '2026-06') {
+                                                        setSelectedMonth('2026-06');
+                                                        notify("회비는 2026년 6월부터 조회 및 관리가 가능합니다.");
                                                     } else {
                                                         setSelectedMonth(val);
                                                     }
