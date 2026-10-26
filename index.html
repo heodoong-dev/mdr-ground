@@ -168,6 +168,7 @@
             const [showModeModal, setShowModeModal] = useState(false);
             const [showFeeConfigModal, setShowFeeConfigModal] = useState(false);
             const [selectedFeeMember, setSelectedFeeMember] = useState(null); // 최근 6개월 회비 상세 모달용 멤버명
+            const [selectedSingleFeeMember, setSelectedSingleFeeMember] = useState(null); // 💡 날짜별 일회비 입금 상세 관리 모달용 멤버명
             const [feeInputMonthly, setFeeInputMonthly] = useState(20000);
             const [feeInputSingle, setFeeInputSingle] = useState(10000);
             const [modeInputNote, setModeInputNote] = useState('');
@@ -249,7 +250,7 @@
             });
 
             // 사용자 배포 구글 웹앱 URL
-            const SHEET_API_URL = "https://script.google.com/macros/s/AKfycbyV1V28AE1ekzuV2gAWDzK8jvDK7g4Hw86rkHuL3hKojq-yrGHd2R-XFffDD9VdLdk/exec";
+            const SHEET_API_URL = "https://script.google.com/macros/s/AKfycbxCaXu94axMjWir0ftIschAzmy4JSt7xf1KQwO019CrZkjWZuuBvPbIBhy0hgkmakK3/exec";
 
             useEffect(() => {
                 localStorage.setItem('mdr_attendance_history', JSON.stringify(attendanceHistory));
@@ -258,7 +259,7 @@
             useEffect(() => {
                 localStorage.setItem('mdr_fee_records', JSON.stringify(feeRecords));
             }, [feeRecords]);
-            const anyModalOpen = !!(showAdminModal || showGuestModal || showDeleteModal || showConfirmModal || showResetModal || showRecordModal || showModeModal || showFeeConfigModal || selectedFeeMember);
+            const anyModalOpen = !!(showAdminModal || showGuestModal || showDeleteModal || showConfirmModal || showResetModal || showRecordModal || showModeModal || showFeeConfigModal || selectedFeeMember || selectedSingleFeeMember);
             const anyModalOpenRef = useRef(anyModalOpen);
             anyModalOpenRef.current = anyModalOpen;
             const pushedStateRef = useRef(false);
@@ -295,6 +296,7 @@
                         setShowModeModal(false);
                         setShowFeeConfigModal(false);
                         setSelectedFeeMember(null);
+                        setSelectedSingleFeeMember(null);
                         pushedStateRef.current = false;
                     }
                 };
@@ -711,7 +713,7 @@
             }, [members]);
             
             // 💡 구글 시트 '회비' 탭으로 실시간 전송 헬퍼 함수
-            const sendFeeToSheet = (month, name, status, reservedDiscount, singlePaid) => {
+            const sendFeeToSheet = (month, name, status, reservedDiscount, singlePaid, paidDates) => {
                 if (!SHEET_API_URL) return;
                 fetch(SHEET_API_URL, {
                     method: 'POST',
@@ -722,7 +724,8 @@
                         name: name,
                         status: status,
                         reservedDiscount: reservedDiscount,
-                        singlePaid: singlePaid
+                        singlePaid: singlePaid,
+                        paidDates: paidDates || []
                     })
                 }).catch(() => {});
             };
@@ -735,10 +738,10 @@
                     return;
                 }
 
-                const currentObj = currentFeeStatus[memberName] || { status: 'unpaid', reservedDiscount: false, singlePaid: false };
-                const currentEntry = typeof currentObj === 'string' ? { status: currentObj, reservedDiscount: false, singlePaid: false } : currentObj;
+                const currentObj = currentFeeStatus[memberName] || { status: 'unpaid', reservedDiscount: false, singlePaid: false, paidDates: [] };
+                const currentEntry = typeof currentObj === 'string' ? { status: currentObj, reservedDiscount: false, singlePaid: false, paidDates: [] } : currentObj;
                 const nextDiscount = currentEntry.reservedDiscount;
-                // 일회비로 변경 시 기본 미입금(false), 완료로 가면 무관
+                const nextPaidDates = status === 'single' ? (currentEntry.paidDates || []) : [];
                 const nextSinglePaid = status === 'single' ? (currentEntry.singlePaid || false) : false;
 
                 setFeeRecords(prev => ({
@@ -748,13 +751,13 @@
                         [memberName]: {
                             status: status,
                             reservedDiscount: nextDiscount,
-                            singlePaid: nextSinglePaid
+                            singlePaid: nextSinglePaid,
+                            paidDates: nextPaidDates
                         }
                     }
                 }));
 
-                // 구글 시트 '회비' 시트로 즉시 전송
-                sendFeeToSheet(selectedMonth, memberName, status, nextDiscount, nextSinglePaid);
+                sendFeeToSheet(selectedMonth, memberName, status, nextDiscount, nextSinglePaid, nextPaidDates);
             };
 
             // 구장 예약 할인 토글 (관리자 전용)
@@ -765,8 +768,8 @@
                     return;
                 }
 
-                const currentObj = currentFeeStatus[memberName] || { status: 'unpaid', reservedDiscount: false, singlePaid: false };
-                const currentEntry = typeof currentObj === 'string' ? { status: currentObj, reservedDiscount: false, singlePaid: false } : currentObj;
+                const currentObj = currentFeeStatus[memberName] || { status: 'unpaid', reservedDiscount: false, singlePaid: false, paidDates: [] };
+                const currentEntry = typeof currentObj === 'string' ? { status: currentObj, reservedDiscount: false, singlePaid: false, paidDates: [] } : currentObj;
                 const nextDiscount = !currentEntry.reservedDiscount;
 
                 setFeeRecords(prev => ({
@@ -780,21 +783,31 @@
                     }
                 }));
 
-                // 구글 시트 '회비' 시트로 즉시 전송
-                sendFeeToSheet(selectedMonth, memberName, currentEntry.status, nextDiscount, currentEntry.singlePaid || false);
+                sendFeeToSheet(selectedMonth, memberName, currentEntry.status, nextDiscount, currentEntry.singlePaid || false, currentEntry.paidDates || []);
             };
 
-            // 💡 일회비 멤버의 입금 완료 여부 토글 (관리자 전용)
-            const toggleSinglePaidStatus = (memberName) => {
+            // 💡 특정 경기 날짜의 납부 상태 토글 (날짜별 일회비 관리)
+            const toggleMatchPaidDate = (memberName, matchDate) => {
                 if (!isAdmin && !isAdminRef.current) {
-                    setPendingAdminAction(() => () => toggleSinglePaidStatus(memberName));
+                    setPendingAdminAction(() => () => toggleMatchPaidDate(memberName, matchDate));
                     setShowAdminModal(true);
                     return;
                 }
 
-                const currentObj = currentFeeStatus[memberName] || { status: 'single', reservedDiscount: false, singlePaid: false };
-                const currentEntry = typeof currentObj === 'string' ? { status: currentObj, reservedDiscount: false, singlePaid: false } : currentObj;
-                const nextSinglePaid = !currentEntry.singlePaid;
+                const currentObj = currentFeeStatus[memberName] || { status: 'single', reservedDiscount: false, singlePaid: false, paidDates: [] };
+                const currentEntry = typeof currentObj === 'string' ? { status: currentObj, reservedDiscount: false, singlePaid: false, paidDates: [] } : currentObj;
+                const prevDates = Array.isArray(currentEntry.paidDates) ? [...currentEntry.paidDates] : [];
+
+                let nextDates;
+                if (prevDates.includes(matchDate)) {
+                    nextDates = prevDates.filter(d => d !== matchDate);
+                } else {
+                    nextDates = [...prevDates, matchDate];
+                }
+
+                // 해당 월 참석 전체 경기 수 확인
+                const totalAttends = (feeSummary.memberAttendedDates[memberName] || []).length;
+                const isAllPaid = totalAttends > 0 && nextDates.length >= totalAttends;
 
                 setFeeRecords(prev => ({
                     ...prev,
@@ -802,44 +815,84 @@
                         ...(prev[selectedMonth] || {}),
                         [memberName]: {
                             ...currentEntry,
+                            paidDates: nextDates,
+                            singlePaid: isAllPaid
+                        }
+                    }
+                }));
+
+                sendFeeToSheet(selectedMonth, memberName, currentEntry.status, currentEntry.reservedDiscount, isAllPaid, nextDates);
+            };
+
+            // 💡 해당 멤버의 모든 참석 경기를 한 번에 완납/미납 처리
+            const setAllMatchesPaid = (memberName, shouldPayAll) => {
+                if (!isAdmin && !isAdminRef.current) {
+                    setPendingAdminAction(() => () => setAllMatchesPaid(memberName, shouldPayAll));
+                    setShowAdminModal(true);
+                    return;
+                }
+
+                const currentObj = currentFeeStatus[memberName] || { status: 'single', reservedDiscount: false, singlePaid: false, paidDates: [] };
+                const currentEntry = typeof currentObj === 'string' ? { status: currentObj, reservedDiscount: false, singlePaid: false, paidDates: [] } : currentObj;
+                const allDates = feeSummary.memberAttendedDates[memberName] || [];
+
+                const nextDates = shouldPayAll ? [...allDates] : [];
+                const nextSinglePaid = shouldPayAll && allDates.length > 0;
+
+                setFeeRecords(prev => ({
+                    ...prev,
+                    [selectedMonth]: {
+                        ...(prev[selectedMonth] || {}),
+                        [memberName]: {
+                            ...currentEntry,
+                            paidDates: nextDates,
                             singlePaid: nextSinglePaid
                         }
                     }
                 }));
 
-                sendFeeToSheet(selectedMonth, memberName, currentEntry.status, currentEntry.reservedDiscount, nextSinglePaid);
-                notify(`${memberName}님의 일회비가 ${nextSinglePaid ? '입금 확인(완납)' : '미입금'}으로 변경되었습니다.`);
+                sendFeeToSheet(selectedMonth, memberName, currentEntry.status, currentEntry.reservedDiscount, nextSinglePaid, nextDates);
+                notify(shouldPayAll ? `${memberName}님의 모든 경기가 완납 처리되었습니다! ✅` : `${memberName}님의 납부 내역이 초기화되었습니다.`);
             };
 
             const feeSummary = useMemo(() => {
                 let paidCount = 0;
                 let reservedDiscountCount = 0;
                 let singleCount = 0;
-                let singlePaidCount = 0; // 실제 일회비 입금 완료한 인원
+                let singlePaidCount = 0; // 실제 일회비 전액 입금 완료한 인원
                 let singleTotalAttendances = 0;
                 let breakCount = 0;
                 let unpaidCount = 0;
                 let collectedAmount = 0;
 
-                // 💡 선택된 월(selectedMonth)의 출석 횟수 매핑: 오직 '정기' 매치만 집계 (비정기 번개/교류전 제외)
-                const monthHistory = (attendanceHistory || []).filter(h => 
-                    h.date && 
-                    h.date.startsWith(selectedMonth) &&
-                    (h.matchType === '정기' || !h.matchType || h.matchType === '')
-                );
+                // 💡 선택된 월(selectedMonth)의 정기 매치 날짜별/멤버별 참석 목록 매핑
+                const monthHistory = (attendanceHistory || [])
+                    .filter(h => 
+                        h.date && 
+                        h.date.startsWith(selectedMonth) &&
+                        (h.matchType === '정기' || !h.matchType || h.matchType === '')
+                    )
+                    .sort((a, b) => a.date.localeCompare(b.date));
+
                 const monthAttendanceCounts = {};
+                const memberAttendedDates = {}; // 멤버별 참석한 정기전 날짜 목록 (예: { "홍길동": ["2026-10-06", "2026-10-13"] })
+
                 monthHistory.forEach(h => {
                     const attendees = Array.isArray(h.attendees) ? h.attendees : [];
                     attendees.forEach(name => {
                         monthAttendanceCounts[name] = (monthAttendanceCounts[name] || 0) + 1;
+                        if (!memberAttendedDates[name]) memberAttendedDates[name] = [];
+                        if (!memberAttendedDates[name].includes(h.date)) {
+                            memberAttendedDates[name].push(h.date);
+                        }
                     });
                 });
 
                 regularMemberList.forEach(m => {
                     const val = currentFeeStatus[m.name];
                     const entry = typeof val === 'string' 
-                        ? { status: val, reservedDiscount: false, singlePaid: false } 
-                        : (val || { status: 'unpaid', reservedDiscount: false, singlePaid: false });
+                        ? { status: val, reservedDiscount: false, singlePaid: false, paidDates: [] } 
+                        : (val || { status: 'unpaid', reservedDiscount: false, singlePaid: false, paidDates: [] });
                     
                     const st = entry.status;
                     if (st === 'paid') {
@@ -852,21 +905,30 @@
                         }
                     } else if (st === 'single') {
                         singleCount++;
-                        const attends = monthAttendanceCounts[m.name] || 0;
+                        const attendedDates = memberAttendedDates[m.name] || [];
+                        const attends = attendedDates.length;
                         singleTotalAttendances += attends;
-                        const singleTotal = attends * singleFeeAmount;
-                        const finalDue = entry.reservedDiscount ? Math.max(0, singleTotal - RESERVED_DISCOUNT_AMOUNT) : singleTotal;
-                        
+
+                        const paidDates = Array.isArray(entry.paidDates) ? entry.paidDates : [];
+                        // 실제 유효한 참석일 중 납부된 일수 계산
+                        const validPaidCount = attendedDates.filter(d => paidDates.includes(d)).length;
+                        const isAllPaid = attends === 0 || (validPaidCount >= attends && attends > 0);
+
                         if (entry.reservedDiscount) {
                             reservedDiscountCount++;
                         }
-                        // 💡 0회 참석인 경우 낼 회비가 없으므로 자동으로 완납 대상이 됨, 1회 이상인 경우 실제 입금확인 체크 여부 반영
-                        if (attends === 0 || entry.singlePaid) {
+
+                        if (isAllPaid) {
                             singlePaidCount++;
-                            if (attends > 0) {
-                                collectedAmount += finalDue;
-                            }
                         }
+
+                        // 납부된 금액 계산: 납부한 경기 횟수 * 일회비 (구장 예약 할인 적용)
+                        const paidTotal = validPaidCount * singleFeeAmount;
+                        const finalCollected = entry.reservedDiscount && isAllPaid 
+                            ? Math.max(0, paidTotal - RESERVED_DISCOUNT_AMOUNT) 
+                            : paidTotal;
+                        collectedAmount += finalCollected;
+
                     } else if (st === 'break') {
                         breakCount++;
                     } else {
@@ -874,9 +936,7 @@
                     }
                 });
 
-                // 납부 대상 인원 = 완료 + 일회비 + 미납 (부상은 유예)
                 const totalTarget = paidCount + singleCount + unpaidCount;
-                // 실제 완납율 = (정규완납 + 일회비완납) / 전체 대상
                 const paidRate = totalTarget > 0 ? Math.round(((paidCount + singlePaidCount) / totalTarget) * 100) : 0;
 
                 return { 
@@ -890,7 +950,8 @@
                     paidRate, 
                     collectedAmount, 
                     totalTarget, 
-                    monthAttendanceCounts 
+                    monthAttendanceCounts,
+                    memberAttendedDates
                 };
             }, [currentFeeStatus, regularMemberList, monthlyFeeAmount, singleFeeAmount, selectedMonth, attendanceHistory]);
 
@@ -905,12 +966,15 @@
                     
                     if (st === 'unpaid') {
                         unpaidRegular.push(m.name);
-                    } else if (st === 'single' && !entry.singlePaid) {
-                        const attends = feeSummary.monthAttendanceCounts[m.name] || 0;
-                        // 💡 0회 참석인 회원은 청구액이 0원이므로 미납 독촉 명단에서 당연히 제외!
-                        if (attends > 0) {
-                            const due = attends * singleFeeAmount - (entry.reservedDiscount ? RESERVED_DISCOUNT_AMOUNT : 0);
-                            unpaidSingle.push(`${m.name}(일회비 ${Math.max(0, due).toLocaleString()}원)`);
+                    } else if (st === 'single') {
+                        const attendedDates = feeSummary.memberAttendedDates[m.name] || [];
+                        const paidDates = Array.isArray(entry.paidDates) ? entry.paidDates : [];
+                        const unpaidDates = attendedDates.filter(d => !paidDates.includes(d));
+
+                        if (unpaidDates.length > 0) {
+                            const unpaidAmount = unpaidDates.length * singleFeeAmount;
+                            const formattedDates = unpaidDates.map(d => d.slice(5).replace('-', '/')).join(', ');
+                            unpaidSingle.push(`${m.name}(${unpaidAmount.toLocaleString()}원 - 미납일: ${formattedDates})`);
                         }
                     }
                 });
@@ -923,14 +987,17 @@
                 }
 
                 let listText = '';
-                if (unpaidRegular.length > 0) listText += `• 정규 회비 미납 (${unpaidRegular.length}명): ${unpaidRegular.join(', ')}\n`;
-                if (unpaidSingle.length > 0) listText += `• 일회비 미입금 (${unpaidSingle.length}명): ${unpaidSingle.join(', ')}\n`;
+                if (unpaidRegular.length > 0) {
+                    listText += `- 정규 회비 미납 (${unpaidRegular.length}명):\n  - ${unpaidRegular.join(', ')}\n`;
+                }
+                if (unpaidSingle.length > 0) {
+                    listText += `- 일회비 미입금 (${unpaidSingle.length}명):\n  - ${unpaidSingle.join('\n  - ')}\n`;
+                }
 
-                const msg = `📢 [맛드레 그라운드] ${selectedMonth.split('-')[1]}월 회비 납부 안내 ⚽\n\n` +
-                    `정규 회비: 인당 ${monthlyFeeAmount.toLocaleString()}원 (구장예약 차감 시 ${(monthlyFeeAmount - RESERVED_DISCOUNT_AMOUNT).toLocaleString()}원)\n` +
-                    `일회비: 정기전 회당 ${singleFeeAmount.toLocaleString()}원\n\n` +
-                    listText +
-                    `\n원활한 구장 대관 및 팀 운영을 위해 입금 확인 부탁드립니다. 감사합니다! 🔥`;
+                const msg = `📢 회비 납부 안내 ⚽\n` +
+                    `-정규 회비: 인당 ${monthlyFeeAmount.toLocaleString()}원\n` +
+                    `-일회비: 정기전 회당 ${singleFeeAmount.toLocaleString()}원\n\n` +
+                    listText.trim();
 
                 const textArea = document.body.appendChild(document.createElement("textarea"));
                 textArea.value = msg;
@@ -1962,16 +2029,17 @@
                                             {regularMemberList.map(member => {
                                                 const val = currentFeeStatus[member.name];
                                                 const entry = typeof val === 'string' 
-                                                    ? { status: val, reservedDiscount: false, singlePaid: false } 
-                                                    : (val || { status: 'unpaid', reservedDiscount: false, singlePaid: false });
+                                                    ? { status: val, reservedDiscount: false, singlePaid: false, paidDates: [] } 
+                                                    : (val || { status: 'unpaid', reservedDiscount: false, singlePaid: false, paidDates: [] });
                                                 const status = entry.status;
                                                 const hasDiscount = !!entry.reservedDiscount;
-                                                const isSinglePaid = !!entry.singlePaid;
 
-                                                // 해당 월 정기전 출석 횟수 및 일회비 계산
-                                                const monthAttends = feeSummary.monthAttendanceCounts[member.name] || 0;
-                                                const rawSingleFee = monthAttends * singleFeeAmount;
-                                                const finalSingleFee = hasDiscount ? Math.max(0, rawSingleFee - RESERVED_DISCOUNT_AMOUNT) : rawSingleFee;
+                                                // 해당 월 정기전 참석 날짜 목록 및 납부 현황
+                                                const attendedDates = feeSummary.memberAttendedDates[member.name] || [];
+                                                const monthAttends = attendedDates.length;
+                                                const paidDates = Array.isArray(entry.paidDates) ? entry.paidDates : [];
+                                                const validPaidCount = attendedDates.filter(d => paidDates.includes(d)).length;
+                                                const isAllSinglePaid = monthAttends > 0 && validPaidCount >= monthAttends;
 
                                                 return (
                                                     <div key={member.id} className="p-2 sm:p-2.5 flex items-center justify-between hover:bg-gray-50/50 transition-all gap-1.5">
@@ -2001,42 +2069,40 @@
                                                                     </span>
                                                                 )}
 
-                                                                {/* 💡 일회비 대상자 배지: 0회 출석이면 미참석(회색), 1회 이상일 때만 횟수 및 완납/미납 표시 */}
+                                                                {/* 💡 일회비 대상자 날짜별 납부 배지: 터치 시 날짜별 관리 팝업 오픈 */}
                                                                 {status === 'single' && (
                                                                     monthAttends === 0 ? (
                                                                         <span className="text-[8px] font-bold px-1.5 py-0.2 rounded shrink-0 border bg-gray-100 text-gray-500 border-gray-200" title="해당 월 정기 매치 미참석 (회비 0원)">
                                                                             미참석
                                                                         </span>
                                                                     ) : (
-                                                                        <span className={`text-[8px] font-black px-1.5 py-0.2 rounded shrink-0 border ${
-                                                                            isSinglePaid 
-                                                                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200' 
-                                                                                : 'bg-amber-50 text-amber-800 border-amber-200'
-                                                                        }`}>
-                                                                            {monthAttends}회{isSinglePaid ? '·완' : '·미'}
-                                                                        </span>
+                                                                        <button 
+                                                                            onClick={() => {
+                                                                                if (!isAdmin) {
+                                                                                    setPendingAdminAction(() => () => setSelectedSingleFeeMember(member.name));
+                                                                                    setShowAdminModal(true);
+                                                                                } else {
+                                                                                    setSelectedSingleFeeMember(member.name);
+                                                                                }
+                                                                            }}
+                                                                            className={`text-[8px] font-black px-1.5 py-0.5 rounded shrink-0 border transition-all active:scale-95 flex items-center gap-0.5 cursor-pointer shadow-xs ${
+                                                                                isAllSinglePaid 
+                                                                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' 
+                                                                                    : 'bg-amber-50 text-amber-800 border-amber-300 hover:bg-amber-100'
+                                                                            }`}
+                                                                            title="클릭하여 경기 날짜별 일회비 입금 관리"
+                                                                        >
+                                                                            <span>{validPaidCount}/{monthAttends}회</span>
+                                                                            <span>{isAllSinglePaid ? '·완' : '·미'}</span>
+                                                                            <span className="text-[7px]">⚙️</span>
+                                                                        </button>
                                                                     )
                                                                 )}
                                                             </div>
                                                         </div>
                                                         
-                                                        {/* 우측: 참석/불참/보류 스타일의 상태 선택 버튼 그룹 */}
+                                                        {/* 우측: 구장예약 토글 + 상태 선택 세그먼트 버튼 */}
                                                         <div className="flex items-center gap-1 sm:gap-1.5 shrink-0">
-                                                            {/* 💡 일회비 입금 확인 토글 버튼: 1회 이상 출석하여 납부할 금액이 있는 경우에만 표시! */}
-                                                            {isAdmin && status === 'single' && monthAttends > 0 && (
-                                                                <button
-                                                                    onClick={() => toggleSinglePaidStatus(member.name)}
-                                                                    className={`px-1.5 py-1 sm:px-2 sm:py-1.5 rounded-lg text-[9px] font-black transition-all border shadow-xs ${
-                                                                        isSinglePaid 
-                                                                            ? 'bg-emerald-600 text-white border-emerald-600' 
-                                                                            : 'bg-amber-50 text-amber-700 border-amber-300'
-                                                                    }`}
-                                                                    title={`일회비 ${finalSingleFee.toLocaleString()}원 입금 확인 토글`}
-                                                                >
-                                                                    <span>{isSinglePaid ? '✅' : '💸'}</span>
-                                                                </button>
-                                                            )}
-
                                                             {/* 구장예약 토글 버튼 (관리자 전용) */}
                                                             {isAdmin && (
                                                                 <button
@@ -2052,7 +2118,7 @@
                                                                 </button>
                                                             )}
 
-                                                            {/* 참석/불참/보류와 동일한 그레이 트레이 세그먼트 버튼 */}
+                                                            {/* 참석/불참/보류 스타일의 세그먼트 버튼 */}
                                                             <div className="flex bg-gray-100 p-0.5 rounded-xl border border-gray-100 shadow-inner shrink-0">
                                                                 <button 
                                                                     onClick={() => setMemberFeeStatus(member.name, 'paid')} 
@@ -2515,6 +2581,152 @@
                                     <button 
                                         onClick={() => setSelectedFeeMember(null)}
                                         className="w-full mt-3.5 py-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl text-xs font-black text-gray-600 transition-colors shrink-0"
+                                    >
+                                        닫기
+                                    </button>
+                                </div>
+                            </div>
+                        );
+                    })()}
+
+                    {/* 💡 매치(경기 날짜)별 일회비 상세 관리 모달 */}
+                    {selectedSingleFeeMember && (() => {
+                        const memberName = selectedSingleFeeMember;
+                        const currentObj = currentFeeStatus[memberName] || { status: 'single', reservedDiscount: false, singlePaid: false, paidDates: [] };
+                        const currentEntry = typeof currentObj === 'string' ? { status: currentObj, reservedDiscount: false, singlePaid: false, paidDates: [] } : currentObj;
+                        
+                        const attendedDates = feeSummary.memberAttendedDates[memberName] || [];
+                        const paidDates = Array.isArray(currentEntry.paidDates) ? currentEntry.paidDates : [];
+                        const hasDiscount = !!currentEntry.reservedDiscount;
+
+                        const totalMatches = attendedDates.length;
+                        const paidCount = attendedDates.filter(d => paidDates.includes(d)).length;
+                        const unpaidCount = totalMatches - paidCount;
+
+                        const totalDue = totalMatches * singleFeeAmount;
+                        const finalDue = hasDiscount ? Math.max(0, totalDue - RESERVED_DISCOUNT_AMOUNT) : totalDue;
+                        const totalPaidAmount = paidCount * singleFeeAmount;
+                        const remainingAmount = Math.max(0, finalDue - totalPaidAmount);
+
+                        return (
+                            <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[210] p-4 backdrop-blur-sm">
+                                <div className="bg-white rounded-3xl p-5 md:p-6 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-200 border border-gray-100 text-left flex flex-col max-h-[85vh]">
+                                    {/* 모달 헤더 */}
+                                    <div className="flex items-center justify-between border-b border-gray-100 pb-3 mb-3 shrink-0">
+                                        <div className="flex items-center gap-2">
+                                            <div className="w-9 h-9 rounded-2xl bg-amber-50 text-amber-700 flex items-center justify-center text-base font-black">
+                                                🗓️
+                                            </div>
+                                            <div>
+                                                <h3 className="text-sm font-black text-gray-800 flex items-center gap-1.5">
+                                                    <span>{memberName}</span>
+                                                    <span className="text-[10px] text-amber-700 font-bold bg-amber-50 border border-amber-200 px-1.5 py-0.2 rounded-md">일회비</span>
+                                                </h3>
+                                                <p className="text-[10px] text-gray-400 font-bold">
+                                                    {selectedMonth}월 정기 매치별 입금 확인
+                                                </p>
+                                            </div>
+                                        </div>
+                                        <button 
+                                            onClick={() => setSelectedSingleFeeMember(null)}
+                                            className="text-gray-400 hover:text-gray-600 p-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+                                        >
+                                            <Icon name="X" className="w-4 h-4" />
+                                        </button>
+                                    </div>
+
+                                    {/* 통계 요약 카드 */}
+                                    <div className="bg-gray-50/70 p-3 rounded-2xl border border-gray-100 mb-3 shrink-0 space-y-1.5 text-xs">
+                                        <div className="flex justify-between items-center text-gray-600 font-bold text-[11px]">
+                                            <span>참석 {totalMatches}회 (회당 {singleFeeAmount.toLocaleString()}원)</span>
+                                            <span className="font-black text-gray-800">{totalDue.toLocaleString()}원</span>
+                                        </div>
+                                        {hasDiscount && (
+                                            <div className="flex justify-between items-center text-purple-700 font-bold text-[10px]">
+                                                <span>구장 예약 할인</span>
+                                                <span>-{RESERVED_DISCOUNT_AMOUNT.toLocaleString()}원</span>
+                                            </div>
+                                        )}
+                                        <div className="border-t border-gray-200/60 pt-1.5 flex justify-between items-center font-black">
+                                            <span className="text-gray-700">입금 완료: {paidCount}/{totalMatches}회</span>
+                                            <span className={remainingAmount === 0 ? 'text-emerald-700' : 'text-rose-600'}>
+                                                {remainingAmount === 0 ? '전액 완납 완료 ✅' : `잔여 미납 ${remainingAmount.toLocaleString()}원 ⚠️`}
+                                            </span>
+                                        </div>
+                                    </div>
+
+                                    {/* 원클릭 전체 완납/미납 액션 바 */}
+                                    <div className="flex gap-2 mb-3 shrink-0">
+                                        <button
+                                            type="button"
+                                            onClick={() => setAllMatchesPaid(memberName, true)}
+                                            className="flex-1 py-2 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 rounded-xl font-black text-xs transition-colors flex items-center justify-center gap-1 shadow-xs"
+                                        >
+                                            <span>✅</span> 전체 완납 처리
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setAllMatchesPaid(memberName, false)}
+                                            className="py-2 px-3 bg-gray-100 text-gray-500 hover:bg-gray-200 rounded-xl font-bold text-xs transition-colors"
+                                            title="모든 입금 내역 초기화"
+                                        >
+                                            전체 미납
+                                        </button>
+                                    </div>
+
+                                    {/* 경기 날짜별 리스트 */}
+                                    <div className="overflow-y-auto no-scrollbar space-y-2 flex-1 pr-0.5">
+                                        {attendedDates.length === 0 ? (
+                                            <div className="py-8 text-center text-xs text-gray-400 font-bold">
+                                                {selectedMonth}월에 참석한 정기 매치가 없습니다.
+                                            </div>
+                                        ) : (
+                                            attendedDates.map((dateStr, idx) => {
+                                                const isPaid = paidDates.includes(dateStr);
+                                                return (
+                                                    <div 
+                                                        key={dateStr}
+                                                        className={`p-3 rounded-2xl border transition-all flex items-center justify-between ${
+                                                            isPaid 
+                                                                ? 'bg-emerald-50/40 border-emerald-200' 
+                                                                : 'bg-white border-gray-100 shadow-xs'
+                                                        }`}
+                                                    >
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="w-5 h-5 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center text-[10px] font-black">
+                                                                {idx + 1}
+                                                            </span>
+                                                            <div className="flex flex-col text-left">
+                                                                <span className="text-xs font-black text-gray-800">
+                                                                    {dateStr} 정기 매치
+                                                                </span>
+                                                                <span className="text-[10px] font-bold text-gray-400">
+                                                                    일회비 {singleFeeAmount.toLocaleString()}원
+                                                                </span>
+                                                            </div>
+                                                        </div>
+
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => toggleMatchPaidDate(memberName, dateStr)}
+                                                            className={`px-3 py-1.5 rounded-xl font-black text-xs transition-all border shadow-xs active:scale-95 flex items-center gap-1 ${
+                                                                isPaid 
+                                                                    ? 'bg-emerald-600 text-white border-emerald-600 hover:bg-emerald-700' 
+                                                                    : 'bg-rose-50 text-rose-600 border-rose-200 hover:bg-rose-100'
+                                                            }`}
+                                                        >
+                                                            <span>{isPaid ? '입금완료 ✅' : '미납 💸'}</span>
+                                                        </button>
+                                                    </div>
+                                                );
+                                            })
+                                        )}
+                                    </div>
+
+                                    {/* 닫기 버튼 */}
+                                    <button 
+                                        onClick={() => setSelectedSingleFeeMember(null)}
+                                        className="w-full mt-3 py-2.5 bg-gray-100 hover:bg-gray-200 rounded-xl text-xs font-black text-gray-600 transition-colors shrink-0"
                                     >
                                         닫기
                                     </button>
