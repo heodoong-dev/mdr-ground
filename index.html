@@ -994,9 +994,7 @@
                     listText += `- 일회비 미입금 (${unpaidSingle.length}명):\n  - ${unpaidSingle.join('\n  - ')}\n`;
                 }
 
-                const msg = `📢 회비 납부 안내 ⚽\n` +
-                    `-정규 회비: 인당 ${monthlyFeeAmount.toLocaleString()}원\n` +
-                    `-일회비: 정기전 회당 ${singleFeeAmount.toLocaleString()}원\n\n` +
+                const msg = `📢 회비 납부 안내 ⚽\n\n` +
                     listText.trim();
 
                 const textArea = document.body.appendChild(document.createElement("textarea"));
@@ -1086,30 +1084,32 @@
 
                         // 1) 분리 대상자들을 서로 다른 팀에 먼저 1명씩 무작위 슬롯 배치
                         const shuffledSeparated = [...attendingSeparated].sort(() => Math.random() - 0.5);
-                        const assignedTeamIndices = [];
                         shuffledSeparated.forEach((player, sIdx) => {
                             const tIdx = sIdx % teamCount;
                             currentTeams[tIdx].players.push(player);
-                            assignedTeamIndices.push(tIdx);
                         });
 
-                        // 2) 나머지 인원 셔플 후 라운드로빈 배분
+                        // 2) 나머지 인원 셔플 후, "현재 인원수가 가장 적은 팀" 우선순위로 배분하여 총 인원수 균등(예: 15명 -> 5, 5, 5) 보장
                         const shuffledFemales = [...remainingFemales].sort(() => Math.random() - 0.5);
                         const shuffledMales = [...remainingMales].sort(() => Math.random() - 0.5);
 
-                        let teamIdx = 0;
-                        shuffledFemales.forEach(p => { 
-                            currentTeams[teamIdx].players.push(p); 
-                            teamIdx = (teamIdx + 1) % teamCount; 
-                        });
-                        shuffledMales.forEach(p => { 
-                            currentTeams[teamIdx].players.push(p); 
-                            teamIdx = (teamIdx + 1) % teamCount; 
-                        });
+                        const assignBalancedByCount = (playerList) => {
+                            playerList.forEach(p => {
+                                // 현재 팀원 수가 가장 적은 팀(들)을 찾음
+                                const minCount = Math.min(...currentTeams.map(t => t.players.length));
+                                const candidateTeams = currentTeams.filter(t => t.players.length === minCount);
+                                // 동률인 팀 중 랜덤 선택하여 편향 방지
+                                const chosenTeam = candidateTeams[Math.floor(Math.random() * candidateTeams.length)];
+                                chosenTeam.players.push(p);
+                            });
+                        };
+
+                        assignBalancedByCount(shuffledFemales);
+                        assignBalancedByCount(shuffledMales);
 
                         let currentCost = getCost(currentTeams);
 
-                        // 3) 최적 밸런싱 스왑 반복문 (분리 대상자가 한 팀으로 뭉치지 않도록 방어)
+                        // 3) 최적 밸런싱 스왑 반복문 (1:1 맞교환이므로 각 팀 총 인원수 5:5:5 및 성별 비율은 절대 불변!)
                         for (let i = 0; i < 2500; i++) {
                             if (currentCost === 0 && !hasSeparationConflict(currentTeams)) break;
 
