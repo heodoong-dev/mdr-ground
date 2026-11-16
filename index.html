@@ -205,9 +205,9 @@
 
             const currentYearMonth = getKSTYearMonth();
             const [selectedMonth, setSelectedMonth] = useState(currentYearMonth);
-            // 디폴트는 최근 3개월 ('3months')
-            // 'month' | '3months' | '6months' | 'custom'
-            const [rankPeriod, setRankPeriod] = useState('3months'); 
+            // 디폴트는 최근 6개월 ('6months')
+            // 'month' | '6months' | 'custom'
+            const [rankPeriod, setRankPeriod] = useState('6months'); 
             
             // 💡 출석 순위에서 멤버 클릭 시 매치 히스토리에서 강조 표시할 멤버명
             const [highlightedMember, setHighlightedMember] = useState(null);
@@ -591,11 +591,6 @@
                     if (rankPeriod === 'month') {
                         return itemMonth === selectedMonth;
                     }
-                    if (rankPeriod === '3months') {
-                        const itemDate = new Date(item.date);
-                        const diffMonths = (now.getFullYear() - itemDate.getFullYear()) * 12 + (now.getMonth() - itemDate.getMonth());
-                        return diffMonths >= 0 && diffMonths < 3;
-                    }
                     if (rankPeriod === '6months') {
                         const itemDate = new Date(item.date);
                         const diffMonths = (now.getFullYear() - itemDate.getFullYear()) * 12 + (now.getMonth() - itemDate.getMonth());
@@ -607,10 +602,10 @@
                         return itemMonth >= start && itemMonth <= end;
                     }
                     return true;
-                }).sort((a, b) => new Date(b.date) - new Date(a.date));
+                }).sort((a, b) => b.date.localeCompare(a.date));
             }, [attendanceHistory, rankPeriod, selectedMonth, customStartMonth, customEndMonth, excludeIrregular]);
 
-            // 출석왕 집계 계산 (오직 정기멤버 DB에 등록된 멤버만 엄격하게 집계 및 구성)
+            // 출석왕 집계 계산 (오직 정기멤버 DB에 등록된 멤버만 엄격하게 집계 및 구성 + 부상월 분모 제외)
             const attendanceStats = useMemo(() => {
                 const regularMembers = members.filter(m => !m.isGuest);
                 const regularMap = new Map();
@@ -621,29 +616,45 @@
                         name: m.name,
                         gender: m.gender,
                         level: m.level,
-                        count: 0
+                        count: 0,
+                        effectiveMatches: 0,
+                        excludedMatches: 0
                     });
                 });
 
                 const totalMatches = filteredHistory.length;
 
                 filteredHistory.forEach(h => {
+                    const matchMonth = (h.date || '').slice(0, 7);
                     const validAttendees = new Set(
                         (h.attendees || []).filter(name => regularMap.has(name))
                     );
-                    validAttendees.forEach(name => {
-                        const target = regularMap.get(name);
-                        if (target) target.count += 1;
+
+                    regularMap.forEach((target, name) => {
+                        const attended = validAttendees.has(name);
+                        const feeVal = feeRecords[matchMonth]?.[name];
+                        const feeStatus = typeof feeVal === 'string' ? feeVal : (feeVal?.status || 'unpaid');
+                        const isBreakMonth = feeStatus === 'break';
+
+                        if (attended) {
+                            target.count += 1;
+                            target.effectiveMatches += 1;
+                        } else if (isBreakMonth) {
+                            // 부상(유예) 달의 불참 경기는 전체 분모에서 제외
+                            target.excludedMatches += 1;
+                        } else {
+                            target.effectiveMatches += 1;
+                        }
                     });
                 });
 
                 const list = Array.from(regularMap.values()).map(item => ({
                     ...item,
-                    rate: totalMatches > 0 ? Math.round((item.count / totalMatches) * 100) : 0
+                    rate: item.effectiveMatches > 0 ? Math.round((item.count / item.effectiveMatches) * 100) : 0
                 }));
 
-                // 1차: 출석 횟수 내림차순, 2차: 이름 가나다순
-                list.sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, 'ko-KR'));
+                // 1차: 출석 횟수 내림차순, 2차: 출석률 내림차순, 3차: 이름 가나다순
+                list.sort((a, b) => b.count - a.count || b.rate - a.rate || a.name.localeCompare(b.name, 'ko-KR'));
 
                 // 동순위(표준 랭킹: 1위가 2명이면 다음 순위는 3위) 부여
                 let currentRank = 1;
@@ -665,7 +676,7 @@
                 const rankGroups = { 1: podiumTier1, 2: podiumTier2, 3: podiumTier3 };
 
                 return { list, totalMatches, rankGroups };
-            }, [filteredHistory, members]);
+            }, [filteredHistory, members, feeRecords]);
 
             // 비정기 기록 모달 오픈 헬퍼
             const openIrregularRecordModal = (attendeeNames) => {
@@ -1557,29 +1568,14 @@
 
                                     {/* 기간 필터 컨트롤러 영역 */}
                                     <div className="bg-white p-3.5 rounded-2xl border border-gray-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-3">
-                                        {/* 필터 탭: 월별 조회 | 최근 3개월 (기본) | 최근 6개월 | 기간조회 */}
+                                        {/* 필터 탭: 최근 6개월 (기본) | 기간조회 */}
                                         <div className="flex bg-gray-100 p-1 rounded-xl border border-gray-200/60 shadow-inner overflow-x-auto no-scrollbar shrink-0">
-                                            <button onClick={() => setRankPeriod('month')} className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all whitespace-nowrap ${rankPeriod === 'month' ? 'bg-white text-green-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>월별 조회</button>
-                                            <button onClick={() => setRankPeriod('3months')} className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all whitespace-nowrap ${rankPeriod === '3months' ? 'bg-white text-green-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>최근 3개월</button>
                                             <button onClick={() => setRankPeriod('6months')} className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all whitespace-nowrap ${rankPeriod === '6months' ? 'bg-white text-green-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>최근 6개월</button>
                                             <button onClick={() => setRankPeriod('custom')} className={`px-3 py-1.5 rounded-lg text-xs font-black transition-all whitespace-nowrap ${rankPeriod === 'custom' ? 'bg-white text-green-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>기간조회</button>
                                         </div>
 
                                         {/* 세부 선택 인풋 영역 및 비정기 필터 */}
                                         <div className="flex items-center gap-2 flex-wrap">
-                                            {/* 월별 조회 선택 시 노출 */}
-                                            {rankPeriod === 'month' && (
-                                                <div className="flex items-center gap-2 animate-in fade-in zoom-in-95 duration-200">
-                                                    <span className="text-[11px] font-bold text-gray-400">조회 월:</span>
-                                                    <input 
-                                                        type="month" 
-                                                        value={selectedMonth} 
-                                                        onChange={e => setSelectedMonth(e.target.value)} 
-                                                        className="bg-white border border-gray-200 rounded-xl px-3 py-1.5 text-xs font-black text-gray-700 outline-none focus:border-green-500 shadow-sm cursor-pointer"
-                                                    />
-                                                </div>
-                                            )}
-
                                             {/* 기간조회 선택 시 노출 (시작월 ~ 종료월) */}
                                             {rankPeriod === 'custom' && (
                                                 <div className="flex items-center gap-1.5 animate-in fade-in zoom-in-95 duration-200 flex-wrap">
@@ -1601,9 +1597,9 @@
                                             )}
 
                                             {/* 현재 선택된 기간 가이드 라벨 */}
-                                            {(rankPeriod === '3months' || rankPeriod === '6months') && (
+                                            {rankPeriod === '6months' && (
                                                 <span className="text-[11px] font-bold text-green-700 bg-green-50 px-2.5 py-1 rounded-lg border border-green-100">
-                                                    {rankPeriod === '3months' ? '최근 3개월 경기 자동 집계 중' : '최근 6개월 경기 자동 집계 중'}
+                                                    최근 6개월 경기 자동 집계 중
                                                 </span>
                                             )}
 
@@ -1785,6 +1781,11 @@
                                                                 {item.rank === 2 && attendanceStats.rankGroups[2]?.length > 1 && (
                                                                     <span className="ml-1.5 text-[9px] bg-slate-100 text-slate-700 font-bold px-1.5 py-0.5 rounded-full">
                                                                         🥈 공동 2위
+                                                                    </span>
+                                                                )}
+                                                                {item.excludedMatches > 0 && (
+                                                                    <span className="ml-1.5 text-[9px] bg-slate-100 text-slate-600 border border-slate-200 font-bold px-1.5 py-0.5 rounded-full">
+                                                                        부상제외 ({item.effectiveMatches}경기 기준)
                                                                     </span>
                                                                 )}
                                                             </div>
