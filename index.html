@@ -1388,8 +1388,8 @@
                                             </div>
                                         </div>
                                         <div className="flex bg-gray-100 p-0.5 rounded-xl border border-gray-100 shadow-inner shrink-0">
-                                            <button onClick={() => requestAttendanceChange(member.id, member.name, true)} className={`status-btn px-3 py-1.5 rounded-lg text-[10px] font-black ${member.isAttending === true ? 'bg-green-500 text-white shadow-md' : 'text-gray-400 hover:text-gray-600'}`}>참석</button>
-                                            <button onClick={() => requestAttendanceChange(member.id, member.name, false)} className={`status-btn px-3 py-1.5 rounded-lg text-[10px] font-black ${member.isAttending === false ? 'bg-red-400 text-white shadow-md' : 'text-gray-400 hover:text-gray-600'}`}>불참</button>
+                                            <button onClick={() => requestAttendanceChange(member.id, member.name, true)} className={`status-btn px-2.5 py-1 rounded-lg text-[10px] font-black ${member.isAttending === true ? 'bg-green-500 text-white shadow-md' : 'text-gray-400 hover:text-gray-600'}`}>참석</button>
+                                            <button onClick={() => requestAttendanceChange(member.id, member.name, false)} className={`status-btn px-2.5 py-1 rounded-lg text-[10px] font-black ${member.isAttending === false ? 'bg-red-400 text-white shadow-md' : 'text-gray-400 hover:text-gray-600'}`}>불참</button>
                                         </div>
                                     </div>
                                 ))}
