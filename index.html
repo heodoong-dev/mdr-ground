@@ -1210,9 +1210,10 @@
             };
 
             const sortedMembers = [...members].sort((a, b) => !a.isGuest ? a.name.localeCompare(b.name, 'ko-KR') : a.id - b.id);
-            const filteredMembers = sortedMembers.filter(m => filterMode === 'unvoted' ? m.isAttending === null : filterMode === 'attending' ? m.isAttending === true : true);
+            const filteredMembers = sortedMembers.filter(m => filterMode === 'unvoted' ? m.isAttending === null : filterMode === 'attending' ? m.isAttending === true : filterMode === 'absent' ? m.isAttending === false : true);
 
             const attendingCount = members.filter(m => m.isAttending === true).length;
+            const absentCount = members.filter(m => m.isAttending === false).length;
             const unvotedCount = members.filter(m => m.isAttending === null).length;
 
             useEffect(() => {
@@ -1345,6 +1346,7 @@
                                         <h2 className="text-[10px] font-black text-gray-400 uppercase tracking-widest text-left">
                                             {filterMode === 'all' && '투표 현황'}
                                             {filterMode === 'attending' && '참석자 명단'}
+                                            {filterMode === 'absent' && '불참자 명단'}
                                             {filterMode === 'unvoted' && '미투표 명단'}
                                         </h2>
                                         {isAdmin && <button onClick={() => setShowResetModal(true)} className="px-1.5 py-0.5 bg-red-50 text-red-500 rounded text-[9px] font-black hover:bg-red-100">투표 리셋</button>}
@@ -1354,7 +1356,8 @@
                                             <button onClick={() => setFilterMode('all')} className="text-white bg-green-500 px-2.5 py-1 rounded-full shadow-md active:scale-95 transition-all text-[9px]">전체보기</button>
                                         ) : (
                                             <>
-                                                <button onClick={() => attendingCount > 0 && setFilterMode('attending')} className={`px-2 py-0.5 rounded-full transition-all active:scale-95 ${attendingCount > 0 ? 'text-green-600 bg-green-50 shadow-sm cursor-pointer hover:bg-green-100' : 'text-gray-300 bg-gray-50 cursor-default'}`}>{attendingCount} 참석</button>
+                                                <button onClick={() => attendingCount > 0 && setFilterMode('attending')} className={`px-2 py-0.5 rounded-full transition-all active:scale-95 whitespace-nowrap ${attendingCount > 0 ? 'text-green-600 bg-green-50 shadow-sm cursor-pointer hover:bg-green-100' : 'text-gray-300 bg-gray-50 cursor-default'}`}>{attendingCount} 참석</button>
+                                                <button onClick={() => absentCount > 0 && setFilterMode('absent')} className={`px-2 py-0.5 rounded-full transition-all active:scale-95 whitespace-nowrap ${absentCount > 0 ? 'text-red-500 bg-red-50 shadow-sm cursor-pointer hover:bg-red-100' : 'text-gray-300 bg-gray-50 cursor-default'}`}>{absentCount} 불참</button>
                                                 <button onClick={() => unvotedCount > 0 && setFilterMode('unvoted')} className={`px-2 py-0.5 rounded-full transition-all active:scale-95 font-black whitespace-nowrap ${unvotedCount > 0 ? 'text-orange-500 bg-orange-50 shadow-sm cursor-pointer hover:bg-orange-100' : 'text-gray-300 bg-gray-50 cursor-default'}`}>{unvotedCount} 미투표</button>
                                             </>
                                         )}
@@ -1369,6 +1372,7 @@
                                         <p className="text-[11px] text-gray-300 font-bold break-keep">
                                             {filterMode === 'unvoted' && "모든 멤버가 투표를 완료했습니다! ✨"}
                                             {filterMode === 'attending' && "참석을 투표한 멤버가 없습니다."}
+                                            {filterMode === 'absent' && "불참을 투표한 멤버가 없습니다."}
                                             {filterMode === 'all' && "등록된 멤버가 없습니다."}
                                         </p>
                                         {filterMode !== 'all' && (
