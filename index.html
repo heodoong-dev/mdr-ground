@@ -1575,23 +1575,22 @@
                                         </div>
 
                                         {/* 세부 선택 인풋 영역 및 비정기 필터 */}
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                            {/* 기간조회 선택 시 노출 (시작월 ~ 종료월) */}
+                                        <div className="flex items-center gap-1.5 flex-wrap w-full md:w-auto">
+                                            {/* 기간조회 선택 시 노출 (시작월 ~ 종료월 한 줄 콤팩트 정렬) */}
                                             {rankPeriod === 'custom' && (
-                                                <div className="flex items-center gap-1.5 animate-in fade-in zoom-in-95 duration-200 flex-wrap">
-                                                    <span className="text-[11px] font-bold text-gray-400">기간 범위:</span>
+                                                <div className="flex items-center gap-1 animate-in fade-in zoom-in-95 duration-200">
                                                     <input 
                                                         type="month" 
                                                         value={customStartMonth} 
                                                         onChange={e => setCustomStartMonth(e.target.value)} 
-                                                        className="bg-white border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs font-black text-gray-700 outline-none focus:border-green-500 shadow-sm cursor-pointer"
+                                                        className="bg-white border border-gray-200 rounded-lg px-2 py-1 text-[11px] font-black text-gray-700 outline-none focus:border-green-500 shadow-xs cursor-pointer w-[112px] sm:w-auto"
                                                     />
-                                                    <span className="text-gray-400 font-black text-xs">~</span>
+                                                    <span className="text-gray-400 font-black text-[11px]">~</span>
                                                     <input 
                                                         type="month" 
                                                         value={customEndMonth} 
                                                         onChange={e => setCustomEndMonth(e.target.value)} 
-                                                        className="bg-white border border-gray-200 rounded-xl px-2.5 py-1.5 text-xs font-black text-gray-700 outline-none focus:border-green-500 shadow-sm cursor-pointer"
+                                                        className="bg-white border border-gray-200 rounded-lg px-2 py-1 text-[11px] font-black text-gray-700 outline-none focus:border-green-500 shadow-xs cursor-pointer w-[112px] sm:w-auto"
                                                     />
                                                 </div>
                                             )}
@@ -1606,13 +1605,13 @@
                                             {/* 비정기 제외 토글 버튼 */}
                                             <button 
                                                 onClick={() => setExcludeIrregular(prev => !prev)}
-                                                className={`px-3 py-1.5 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 border shadow-sm ${
+                                                className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all flex items-center gap-1 border shadow-xs whitespace-nowrap ml-auto md:ml-0 ${
                                                     excludeIrregular 
                                                         ? 'bg-purple-50 text-purple-700 border-purple-200' 
                                                         : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'
                                                 }`}
                                             >
-                                                <span className={`w-2 h-2 rounded-full ${excludeIrregular ? 'bg-purple-600' : 'bg-gray-300'}`}></span>
+                                                <span className={`w-1.5 h-1.5 rounded-full ${excludeIrregular ? 'bg-purple-600' : 'bg-gray-300'}`}></span>
                                                 비정기 제외
                                             </button>
                                         </div>
@@ -1785,7 +1784,7 @@
                                                                 )}
                                                                 {item.excludedMatches > 0 && (
                                                                     <span className="ml-1.5 text-[9px] bg-slate-100 text-slate-600 border border-slate-200 font-bold px-1.5 py-0.5 rounded-full">
-                                                                        부상제외 ({item.effectiveMatches}경기 기준)
+                                                                        부상제외 {item.effectiveMatches}경기 기준
                                                                     </span>
                                                                 )}
                                                             </div>
